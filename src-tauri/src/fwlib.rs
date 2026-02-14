@@ -14,7 +14,7 @@ pub struct ODBTOFS {
 }
 
 #[cfg(target_os = "windows")]
-#[link(name = "Fwlib32")]
+#[link(name = "Fwlib64")]
 extern "C" {
     fn cnc_allclibhndl3(
         ip_addr: *const c_char,

@@ -7,7 +7,7 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", lib_path.display());
 
     #[cfg(target_os = "windows")]
-    println!("cargo:rustc-link-lib=Fwlib32");
+    println!("cargo:rustc-link-lib=Fwlib64");
     #[cfg(target_os = "linux")]
     println!("cargo:rustc-link-lib=fwlib32");
     tauri_build::build()
