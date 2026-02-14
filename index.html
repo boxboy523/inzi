@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>INZI CNC Gauge System</title>
+    <style>
+      body { font-family: sans-serif; padding: 20px; }
+      .machine-card { border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+      .status-on { color: green; font-weight: bold; }
+      .status-off { color: red; font-weight: bold; }
+      .control-panel { margin-top: 20px; padding: 15px; background-color: #f9f9f9; border-radius: 4px; }
+      input { padding: 5px; margin-right: 5px; }
+      button { padding: 5px 10px; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <h1>CNC 연결 상태</h1>
+    <div id="machine-list">
+      <p>데이터 로딩 중...</p>
+    </div>
+
+    <div class="control-panel">
+      <h3>🛠️ 수동 오프셋 읽기 (테스트)</h3>
+      <div>
+        <label>장비 ID: <input type="number" id="input-machine-id" placeholder="예: 1" /></label>
+        <label>공구 번호: <input type="number" id="input-tool-num" placeholder="예: 11" /></label>
+        <button id="btn-read-offset">값 읽기</button>
+      </div>
+      <p>결과: <strong id="offset-result">-</strong> mm</p>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
