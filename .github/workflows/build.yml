@@ -1,0 +1,48 @@
+name: "Windouws Build"
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+ build-windows:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Check libs folder
+        run: |
+          if (Test-Path "libs/Fwlib64.lib") { echo "Library found!" } else { echo "Library NOT found!"; exit 1 }
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "CNC Gauge v__VERSION__"
+          releaseBody: "Factory Test Build from GitHub Actions"
+          releaseDraft: true
+          prerelease: false
