@@ -31,7 +31,7 @@ jobs:
 
       - name: Check libs folder
         run: |
-          if (Test-Path "libs/Fwlib64.lib") { echo "Library found!" } else { echo "Library NOT found!"; exit 1 }
+          if (Test-Path "src-tauri/lib/Fwlib64.lib") { echo "Library found!" } else { echo "Library NOT found!"; exit 1 }
 
       - name: Install frontend dependencies
         run: pnpm install
