@@ -36,6 +36,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      - name: Build Debug Version
+        run: pnpm tauri build --debug
+        env:
+          CI: true 
+
+      - name: Upload Debug Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnc-gauge-debug-build
+          path: src-tauri/target/debug/bundle/msi/*.msi
+          if-no-files-found: warn
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
