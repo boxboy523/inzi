@@ -14,7 +14,6 @@ async function initMachineList() {
     if (!listContainer) return;
 
     try {
-    // get_machines 대신 get_machine_status 호출
         const machines = await invoke<MachineStatus[]>("get_machine_status");
         listContainer.innerHTML = machines.map((m) => {
             const statusClass = m.connected ? "status-on" : "status-off";
@@ -49,7 +48,6 @@ async function handleReadOffset() {
 
     try {
         resultDisplay.innerText = "통신 중...";
-        // Rust의 read_tool_offset 커맨드 호출
         const offsetValue = await invoke<number>("read_tool_offset", {
             machineId,
             toolNum,
@@ -62,7 +60,6 @@ async function handleReadOffset() {
     }
 }
 
-// 3. 이벤트 리스너 등록
 window.addEventListener("DOMContentLoaded", () => {
     initMachineList();
 
@@ -75,3 +72,89 @@ window.addEventListener("DOMContentLoaded", () => {
         readBtn.addEventListener("click", handleReadOffset);
     }
 });
+
+function updateClock() {
+  const now = new Date();
+  const timeString = now.toLocaleString('ko-KR', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  });
+  document.getElementById('clock')!.innerText = timeString;
+}
+setInterval(updateClock, 1000);
+
+window.openTab = (tabName: string) => {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  
+  document.getElementById(tabName)?.classList.add('active');
+  // 버튼 활성화 로직은 event.target 등을 활용해 추가 가능
+};
+
+let currentEditingId: string | null = null; // 현재 수정하려는 input ID
+
+window.requestEdit = (machineId: number, toolNum: number) => {
+  currentEditingId = `input-${machineId}-${toolNum}`;
+  const modal = document.getElementById('password-modal');
+  modal?.classList.remove('hidden');
+  (document.getElementById('admin-pw') as HTMLInputElement).value = ''; // 초기화
+  document.getElementById('admin-pw')?.focus();
+};
+
+window.closeModal = () => {
+  document.getElementById('password-modal')?.classList.add('hidden');
+  currentEditingId = null;
+};
+
+window.checkPassword = async () => {
+  const inputPw = (document.getElementById('admin-pw') as HTMLInputElement).value;
+
+  const isValid = await invoke('verify_password', { input: inputPw });
+
+  if (isValid) {
+    alert("인증되었습니다. 값을 수정하세요.");
+    enableEditMode();
+    window.closeModal();
+  } else {
+    alert("비밀번호가 틀렸습니다.");
+  }
+};
+
+function enableEditMode() {
+  if (!currentEditingId) return;
+  const inputEl = document.getElementById(currentEditingId) as HTMLInputElement;
+
+  const oldVal = parseFloat(inputEl.value);
+  inputEl.disabled = false;
+  inputEl.focus();
+
+  inputEl.onblur = async () => {
+    const newVal = parseFloat(inputEl.value);
+    if (oldVal !== newVal) {
+      const [_, machineStr, toolStr] = currentEditingId!.split('-');
+
+      try {
+        await invoke('log_offset_change', {
+          machineId: parseInt(machineStr),
+          toolNum: parseInt(toolStr),
+          oldVal: oldVal,
+          newVal: newVal
+        });
+        alert(`저장 완료: ${oldVal} -> ${newVal}`);
+      } catch (e) {
+        alert("로그 저장 실패: " + e);
+      }
+    }
+    inputEl.disabled = true; // 다시 잠금
+    inputEl.onblur = null;   // 이벤트 제거
+  };
+}
+
+declare global {
+  interface Window {
+    openTab: (name: string) => void;
+    requestEdit: (m: number, t: number) => void;
+    closeModal: () => void;
+    checkPassword: () => void;
+  }
+}

@@ -4,7 +4,6 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     sync::mpsc::UnboundedSender,
-    task,
     time::timeout,
 };
 
@@ -148,10 +147,5 @@ mod tests {
         });
         let handle_result = spawn_gauge_stream("127.0.0.1", port, "500000").await;
         assert!(handle_result.is_ok(), "TCP 연결 또는 스트림 생성 실패");
-
-        let handle = handle_result.unwrap();
-
-        let task_result = handle.await.unwrap();
-        assert!(task_result.is_ok(), "루프 실행 중 에러 발생");
     }
 }

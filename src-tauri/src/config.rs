@@ -8,6 +8,7 @@ pub struct AppConfig {
     pub gauge: GaugeConfig,
     pub machines: Vec<MachineConfig>,
     pub master: MasterConfig,
+    pub admin: AdminConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -29,6 +30,11 @@ pub struct MachineConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MasterConfig {
     pub offsets: HashMap<u16, HashMap<i16, f64>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AdminConfig {
+    pub password: String,
 }
 
 impl Default for AppConfig {
@@ -59,6 +65,9 @@ impl Default for AppConfig {
                 },
             ],
             master: MasterConfig { offsets },
+            admin: AdminConfig {
+                password: "admin123".to_string(),
+            },
         }
     }
 }

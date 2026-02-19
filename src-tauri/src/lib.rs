@@ -1,9 +1,13 @@
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
 
+use chrono::Local;
 use serde::Serialize;
 use tauri::{Manager, State};
 
+use crate::config::AdminConfig;
 use crate::{
     cnc::spawn_cnc_loop, config::AppConfig, fwlib::FocasClient, gauge::spawn_gauge_stream,
 };
@@ -18,6 +22,14 @@ pub struct AppState {
     pub config: Mutex<AppConfig>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ToolData {
+    pub tool_num: i16,
+    pub name: String,
+    pub offset: f64,
+    life_count: i16,
+}
+
 #[derive(Serialize)]
 pub struct MachineStatus {
     pub id: u8,
@@ -25,6 +37,17 @@ pub struct MachineStatus {
     pub ip: String,
     pub port: i16,
     pub connected: bool,
+    pub tools: Vec<ToolData>,
+}
+
+#[derive(Serialize)]
+pub struct GaugeData {
+    ip: String,
+    is_connected: bool,
+    last_hex: String,
+    raw_data: String,
+    master_offset: f64,
+    current_val: f64,
 }
 
 #[tauri::command]
@@ -68,6 +91,48 @@ async fn read_tool_offset(
 
     // raw 데이터를 mm 단위로 변환 (0.001 기준)
     Ok(res.data as f64 / 1000.0)
+}
+
+#[tauri::command]
+fn verify_password(input: String, state: State<AdminConfig>) -> bool {
+    input == state.password
+}
+
+#[tauri::command]
+fn log_offset_change(
+    machine_id: u16,
+    tool_num: i16,
+    old_val: f64,
+    new_val: f64,
+) -> Result<(), String> {
+    let now = Local::now();
+
+    if let Err(e) = fs::create_dir_all("log") {
+        return Err(format!("로그 폴더 생성 실패: {}", e));
+    }
+
+    let file_name = format!("log/{}.txt", now.format("%Y-%m-%d"));
+
+    let log_msg = format!(
+        "[{}] Machine: #{} | Tool: T{} | Offset Changed: {:.3} -> {:.3}\n",
+        now.format("%H:%M:%S"),
+        machine_id,
+        tool_num,
+        old_val,
+        new_val
+    );
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file_name)
+        .map_err(|e| format!("로그 파일 열기 실패 ({}): {}", file_name, e))?;
+
+    file.write_all(log_msg.as_bytes())
+        .map_err(|e| format!("로그 쓰기 실패: {}", e))?;
+
+    println!("로그 저장됨: {} >> {}", file_name, log_msg.trim());
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
