@@ -1,34 +1,109 @@
 {
   "gauge": {
-    "ip": "192.168.0.100",
+    "ip": "127.0.0.1",
     "port": 5002,
-    "command_hex": "500000FFFF03000E00200001140000D41700A801000000",
-    "gauge_batch_size": 5
+    "command_hex": "500000FFFF03000E00200001140000D41700A801000000"
   },
   "machines": [
     {
+      "id": 0,
+      "name": "Lathe #1 (OP-10)",
+      "ip": "dummy",
+      "port": 8193
+    },
+    {
       "id": 1,
       "name": "Lathe #1 (OP-10)",
-      "ip": "192.168.0.145",
+      "ip": "dummy",
       "port": 8193
     },
     {
       "id": 2,
       "name": "Lathe #2 (OP-20)",
-      "ip": "192.168.0.146",
+      "ip": "dummy",
       "port": 8193
     }
   ],
-  "master": {
-    "offsets": {
-      "2": {
-        "11": 48.0,
-        "12": 48.0
-      },
-      "1": {
-        "11": 48.0,
-        "12": 48.0
-      }
+  "mapping": {
+    "tool_data": {
+      "0": [
+        {
+          "machine_id": 0,
+          "tool_num": 11,
+          "basic_size": 48.0,
+          "manual_offset": 0.0,
+          "offset_rate": 1.0,
+          "active": true,
+          "avg_gauge": null,
+          "final_offset": null
+        },
+        {
+          "machine_id": 0,
+          "tool_num": 12,
+          "basic_size": 48.0,
+          "manual_offset": 0.0,
+          "offset_rate": 1.0,
+          "active": true,
+          "avg_gauge": null,
+          "final_offset": null
+        }
+      ],
+      "1": [
+        {
+          "machine_id": 1,
+          "tool_num": 11,
+          "basic_size": 48.0,
+          "manual_offset": 0.0,
+          "offset_rate": 1.0,
+          "active": true,
+          "avg_gauge": null,
+          "final_offset": null
+        },
+        {
+          "machine_id": 1,
+          "tool_num": 12,
+          "basic_size": 48.0,
+          "manual_offset": 0.0,
+          "offset_rate": 1.0,
+          "active": true,
+          "avg_gauge": null,
+          "final_offset": null
+        }
+      ],
+      "2": [
+        {
+          "machine_id": 2,
+          "tool_num": 11,
+          "basic_size": 48.0,
+          "manual_offset": 0.0,
+          "offset_rate": 1.0,
+          "active": true,
+          "avg_gauge": null,
+          "final_offset": null
+        },
+        {
+          "machine_id": 2,
+          "tool_num": 12,
+          "basic_size": 48.0,
+          "manual_offset": 0.0,
+          "offset_rate": 1.0,
+          "active": true,
+          "avg_gauge": null,
+          "final_offset": null
+        }
+      ]
+    },
+    "batch_size": {
+      "1": 5,
+      "0": 5,
+      "2": 5
     }
+  },
+  "admin": {
+    "password": "admin123"
+  },
+  "log_path": "logs/log.db",
+  "ui": {
+    "font_size": 25
   }
 }

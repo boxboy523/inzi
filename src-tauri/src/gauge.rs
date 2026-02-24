@@ -1,24 +1,29 @@
 use std::time::Duration;
 
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-    sync::mpsc::UnboundedSender,
-    time::timeout,
-};
+use bytes::BytesMut;
+use tokio::{io::AsyncWriteExt, net::TcpStream, sync::broadcast::Sender};
+
+use crate::io::{Unzip, IO};
+use futures::{stream::SplitStream, SinkExt, StreamExt};
+use tokio_util::codec::{Decoder, Encoder, Framed};
 
 pub fn spawn_gauge_stream(
     ip: &str,
     port: u16,
     command_hex: &str,
-    channel: UnboundedSender<GaugeResponse>,
+    channel: Sender<GaugeResponse>,
 ) -> anyhow::Result<()> {
+    if ip == "127.0.0.1" {
+        println!("Spawning dummy gauge server for testing...");
+        tokio::spawn(async move {
+            spawn_dummy_gauge_server(port).await;
+        });
+    }
     let cmd = hex::decode(command_hex)?;
     let addr = format!("{}:{}", ip, port);
     tokio::spawn(async move {
         loop {
-            println!("Attempting to connect to gauge at {}...", addr);
-            let mut tcp_stream = match TcpStream::connect(&addr).await {
+            let tcp_stream = IO::new(match TcpStream::connect(&addr).await {
                 Ok(stream) => {
                     println!("Successfully connected to gauge at {}", addr);
                     stream
@@ -28,50 +33,72 @@ pub fn spawn_gauge_stream(
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     continue; // 다시 연결 시도로 돌아감
                 }
-            };
-            let mut stream_buffer = StreamBuffer::new();
-            loop {
-                let mut buf = vec![0; 1024];
-                if let Err(e) = tcp_stream.write_all(&cmd).await {
-                    eprintln!("Write error: {}. Breaking for reconnect...", e);
-                    break;
+            });
+
+            let (sink, stream) = tcp_stream
+                .map(|stream| Framed::new(stream, McProtocolCodec).split())
+                .unzip();
+            let cmd_clone = cmd.clone();
+            let channel_clone = channel.clone();
+            tokio::select! {
+                _ = sink.consume_and_wait(|mut sink| async move {
+                    loop {
+                        if let Err(e) = sink.send(cmd_clone.clone()).await {
+                            eprintln!("Sink send error: {}. Stopping sink task.", e);
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }) => {
+                    eprintln!("Sink task ended for {}", addr);
                 }
-                let n = match timeout(Duration::from_millis(500), tcp_stream.read(&mut buf)).await {
-                    Ok(Ok(0)) => {
-                        println!("Connection closed by gauge (EOF).");
-                        break;
+                _ = stream
+                    .consume_and_wait(|stream| async move {
+                        gauge_get_response(channel_clone, stream).await;
+                    }) => {
+                        eprintln!("Stream task ended for {}", addr);
                     }
-                    Ok(Ok(n)) => n,
-                    Ok(Err(e)) => {
-                        eprintln!("Read error: {}.", e);
-                        break;
-                    }
-                    Err(_) => continue,
-                };
-                buf.truncate(n);
-                let (new_buffer, response_opt) = stream_buffer.append(buf);
-                stream_buffer = new_buffer;
-                if let Some(response) = response_opt {
-                    println!("Received response: {:?}", response);
-                    if let Err(_) = channel.send(response) {
-                        eprintln!("Channel receiver dropped. Stopping task.");
-                        return;
-                    }
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
             }
-            println!("Reconnecting to gauge at {} in 5s...", addr);
+
+            println!(
+                "Disconnected from gauge at {}. Attempting to reconnect...",
+                addr
+            );
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
     Ok(())
 }
 
-#[derive(Debug)]
+pub async fn gauge_get_response(
+    channel: Sender<GaugeResponse>,
+    stream: SplitStream<Framed<TcpStream, McProtocolCodec>>,
+) {
+    stream
+        .filter_map(|result| async {
+            match result {
+                Ok(response) => Some(response),
+                Err(e) => {
+                    eprintln!("Stream error: {}", e);
+                    None
+                }
+            }
+        })
+        .fold(channel, |ch, response| async move {
+            if let Err(e) = ch.send(response) {
+                eprintln!("Channel send error: {}", e);
+            }
+            ch
+        })
+        .await;
+}
+
+#[derive(Debug, Clone)]
 pub struct GaugeResponse {
     pub machine_id: u16,
+    pub raw_data: String,
     plc_data_on: u16,
-    pub points: Vec<f64>,
+    pub point: i32,
 }
 
 impl GaugeResponse {
@@ -81,44 +108,106 @@ impl GaugeResponse {
         }
         let machine_id = u16::from_le_bytes([bytes[11], bytes[12]]);
         let plc_data_on = u16::from_le_bytes([bytes[13], bytes[14]]);
-        let points = (0..5)
+        let point = (0..2)
             .map(|i| {
                 let offset = 31 + i * 4;
-                let integer = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
-                let fractional = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
-                integer as f64 + (fractional as f64 / 10000.0)
+                let integer = i16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+                let fractional = i16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
+                integer as i32 * 10000 + fractional as i32
             })
-            .collect();
+            .sum::<i32>()
+            / 2;
         Some(Self {
             machine_id,
+            raw_data: hex::encode(&bytes),
             plc_data_on,
-            points,
+            point,
         })
     }
 }
 
-#[derive(Debug)]
-struct StreamBuffer(Vec<u8>);
+pub struct McProtocolCodec;
 
-impl StreamBuffer {
-    fn new() -> Self {
-        Self(Vec::new())
-    }
+impl Decoder for McProtocolCodec {
+    type Item = GaugeResponse;
+    type Error = anyhow::Error;
 
-    fn append(mut self, mut data: Vec<u8>) -> (Self, Option<GaugeResponse>) {
-        self.0.append(&mut data);
-        drop(data);
-        if self.0.len() < 11 {
-            return (self, None);
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.len() < 11 {
+            return Ok(None);
         }
-        let length = u16::from_le_bytes([self.0[7], self.0[8]]) as usize;
-        if self.0.len() < (length + 9) {
-            return (self, None);
+        let length = u16::from_le_bytes([src[7], src[8]]) as usize;
+        if src.len() < (length + 9) {
+            return Ok(None);
         }
-        data = self.0.drain(..(length + 9)).collect();
-        let response = GaugeResponse::from_bytes(data);
-        (self, response)
+        let data = src.split_to(length + 9).to_vec();
+        Ok(GaugeResponse::from_bytes(data))
     }
+}
+
+impl Encoder<Vec<u8>> for McProtocolCodec {
+    type Error = anyhow::Error;
+
+    fn encode(&mut self, item: Vec<u8>, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
+        dst.extend_from_slice(&item);
+        Ok(())
+    }
+}
+
+pub async fn spawn_dummy_gauge_server(port: u16) {
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .expect("Failed to bind dummy gauge");
+    println!("[Dummy] Fake Gauge Server is running on {}", addr);
+
+    tokio::spawn(async move {
+        loop {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut machine_id = 1u16;
+                    loop {
+                        let mut bytes = vec![0u8; 51];
+                        bytes[7] = 42; // payload length
+                        bytes[8] = 0;
+
+                        let m_bytes = machine_id.to_le_bytes();
+                        bytes[11] = m_bytes[0];
+                        bytes[12] = m_bytes[1];
+
+                        let ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .subsec_millis();
+                        let frac = (ms % 100) as i16 - 50;
+
+                        let int_bytes = 48i16.to_le_bytes(); // 96 * 10000 / 2 = 48.0000 기준
+                        let frac_bytes = frac.to_le_bytes();
+
+                        bytes[31] = int_bytes[0];
+                        bytes[32] = int_bytes[1];
+                        bytes[33] = frac_bytes[0];
+                        bytes[34] = frac_bytes[1];
+                        bytes[35] = int_bytes[0];
+                        bytes[36] = int_bytes[1];
+                        bytes[37] = frac_bytes[0];
+                        bytes[38] = frac_bytes[1];
+
+                        if socket.write_all(&bytes).await.is_err() {
+                            break;
+                        }
+                        println!(
+                            "[Dummy] Sent response with machine_id {} and point {}",
+                            machine_id,
+                            48.0 + (frac as f64) / 10000.0
+                        );
+                        machine_id = (machine_id + 1) % 3;
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                    }
+                });
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -145,7 +234,8 @@ mod tests {
             socket.write_all(&mock_response).await.unwrap();
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         });
-        let handle_result = spawn_gauge_stream("127.0.0.1", port, "500000").await;
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let handle_result = spawn_gauge_stream("127.0.0.1", port, "500000", tx);
         assert!(handle_result.is_ok(), "TCP 연결 또는 스트림 생성 실패");
     }
 }

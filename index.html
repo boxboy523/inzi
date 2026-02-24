@@ -1,35 +1,95 @@
 <!DOCTYPE html>
 <html lang="ko">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>INZI CNC Gauge System</title>
-    <style>
-      body { font-family: sans-serif; padding: 20px; }
-      .machine-card { border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 4px; }
-      .status-on { color: green; font-weight: bold; }
-      .status-off { color: red; font-weight: bold; }
-      .control-panel { margin-top: 20px; padding: 15px; background-color: #f9f9f9; border-radius: 4px; }
-      input { padding: 5px; margin-right: 5px; }
-      button { padding: 5px 10px; cursor: pointer; }
-    </style>
-  </head>
-  <body>
-    <h1>CNC 연결 상태</h1>
-    <div id="machine-list">
-      <p>데이터 로딩 중...</p>
-    </div>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/src/style.css">
+  <title>CNC HMI</title>
+  <style>
+    /* 숫자 입력창 화살표 숨김 */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { 
+      -webkit-appearance: none; 
+      margin: 0; 
+    }
+  </style>
+</head>
+<body class="bg-gray-100 font-sans text-sm select-none h-screen w-screen flex flex-col">
 
-    <div class="control-panel">
-      <h3>🛠️ 수동 오프셋 읽기 (테스트)</h3>
-      <div>
-        <label>장비 ID: <input type="number" id="input-machine-id" placeholder="예: 1" /></label>
-        <label>공구 번호: <input type="number" id="input-tool-num" placeholder="예: 11" /></label>
-        <button id="btn-read-offset">값 읽기</button>
+  <div class="flex-1 w-full h-full overflow-hidden border-gray-400">
+    <table class="w-full h-full border-collapse bg-white text-center" id="main-table">
+      <thead id="table-head">
+        </thead>
+      <tbody id="table-body">
+        </tbody>
+    </table>
+  </div>
+
+  <div id="edit-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-white p-6 rounded shadow-xl w-96">
+      <h3 id="edit-title" class="text-lg font-bold mb-4">수정</h3>
+      <input type="text" id="edit-input" readonly class="w-full border p-2 mb-4 text-right text-2xl font-mono bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500">
+
+      <div class="grid grid-cols-3 gap-2 mb-4">
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">7</button>
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">8</button>
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">9</button>
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">4</button>
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">5</button>
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">6</button>
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">1</button>
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">2</button>
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">3</button>
+        <button class="keypad-btn p-4 bg-gray-300 text-2xl font-bold rounded active:bg-gray-400" data-key="minus">+/-</button>
+        <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">0</button>
+        <button class="keypad-btn p-4 bg-gray-300 text-2xl font-bold rounded active:bg-gray-400">.</button>
+        <button class="keypad-btn col-span-2 p-4 bg-red-100 text-red-600 text-xl font-bold rounded active:bg-red-200" data-key="clear">Clear</button>
+        <button class="keypad-btn p-4 bg-gray-300 text-xl font-bold rounded active:bg-gray-400" data-key="backspace">←</button>
       </div>
-      <p>결과: <strong id="offset-result">-</strong> mm</p>
-    </div>
 
-    <script type="module" src="/src/main.ts"></script>
-  </body>
-</html>
+      <div class="flex justify-end gap-2">
+        <button id="btn-edit-cancel" class="px-6 py-3 bg-gray-300 rounded font-bold hover:bg-gray-400">취소</button>
+        <button id="btn-edit-save" class="px-6 py-3 bg-blue-600 text-white rounded font-bold hover:bg-blue-700">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="history-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-white p-4 rounded shadow-xl w-[600px] h-[500px] flex flex-col">
+      <div class="flex justify-between items-center mb-2">
+        <h3 id="history-title" class="text-lg font-bold">오프셋 수정 이력</h3>
+        <button id="btn-history-close" class="text-red-500 font-bold px-2 text-lg hover:text-red-700">X</button>
+      </div>
+      <div class="flex-1 overflow-y-auto border">
+        <table class="w-full text-xs text-center">
+          <thead class="sticky top-0 bg-gray-200">
+            <tr>
+              <th class="p-1">시간</th>
+              <th class="p-1">이전값</th>
+              <th class="p-1">변경량</th>
+              <th class="p-1">변경후</th>
+              <th class="p-1">성공</th>
+            </tr>
+          </thead>
+          <tbody id="history-body">
+            </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="error-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[100]">
+    <div class="bg-red-50 p-6 rounded-lg shadow-2xl border-4 border-red-600 w-[500px] text-center animate-pulse">
+      <div class="text-red-600 text-6xl mb-4">⚠️</div>
+      <h2 class="text-3xl font-bold text-red-700 mb-2">시스템 경고</h2>
+      <p id="error-message" class="text-xl text-gray-800 font-bold mb-6 break-words">
+        네트워크 연결이 끊어졌습니다.
+      </p>
+      <button id="btn-error-close" class="px-8 py-3 bg-red-600 text-white text-xl font-bold rounded hover:bg-red-700 shadow-lg">
+        확인
+      </button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>

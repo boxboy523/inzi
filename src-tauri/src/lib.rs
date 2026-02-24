@@ -1,13 +1,12 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
 
-use chrono::Local;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri::{Manager, State};
 
-use crate::config::AdminConfig;
+use crate::cnc::ToolData;
+use crate::logger::HistoryLogger;
 use crate::{
     cnc::spawn_cnc_loop, config::AppConfig, fwlib::FocasClient, gauge::spawn_gauge_stream,
 };
@@ -16,123 +15,203 @@ pub mod cnc;
 pub mod config;
 pub mod fwlib;
 pub mod gauge;
+pub mod io;
+pub mod logger;
 
 pub struct AppState {
     pub handle_table: Arc<HashMap<u16, FocasClient>>,
-    pub config: Mutex<AppConfig>,
+    pub tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
+    pub batch_size: Arc<Mutex<HashMap<u16, usize>>>,
+    pub password: String,
+    pub log_path: String,
+    pub font_size: u32,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ToolData {
+pub struct OffsetLog {
+    pub timestamp: DateTime<Utc>,
+    pub machine_id: u16,
     pub tool_num: i16,
-    pub name: String,
-    pub offset: f64,
-    life_count: i16,
+    pub old_value: i32,
+    pub change_amount: i32,
+    pub new_value: i32,
+    pub success: bool,
 }
 
-#[derive(Serialize)]
-pub struct MachineStatus {
-    pub id: u8,
-    pub name: String,
-    pub ip: String,
-    pub port: i16,
-    pub connected: bool,
-    pub tools: Vec<ToolData>,
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct ToolUiState {
+    #[serde(flatten)]
+    pub data: ToolData,
+    pub current_offset: f64,
+    pub previous_offset: f64,
+    pub life: i16,
+    pub count: i16,
 }
 
-#[derive(Serialize)]
-pub struct GaugeData {
-    ip: String,
-    is_connected: bool,
-    last_hex: String,
-    raw_data: String,
-    master_offset: f64,
-    current_val: f64,
-}
-
-#[tauri::command]
-async fn get_machine_status(state: State<'_, AppState>) -> Result<Vec<MachineStatus>, String> {
-    let config = state.config.lock().map_err(|_| "Config Mutex poisoned")?;
-
-    let mut statuses = Vec::new();
-
-    for machine in &config.machines {
-        let connected = if let Some(client) = state.handle_table.get(&(machine.id as u16)) {
-            client.is_connected()
-        } else {
-            false
-        };
-
-        statuses.push(MachineStatus {
-            id: machine.id,
-            name: machine.name.clone(),
-            ip: machine.ip.clone(),
-            port: machine.port,
-            connected,
-        });
-    }
-
-    Ok(statuses)
+#[derive(Debug, Serialize, Clone)]
+pub struct MachineUiState {
+    pub machine_id: u16,
+    pub upper_tool: ToolUiState, // 황삭 (Tuple의 0번)
+    pub lower_tool: ToolUiState, // 정삭 (Tuple의 1번)
+    pub batch_size: usize,
 }
 
 #[tauri::command]
-async fn read_tool_offset(
-    machine_id: u16,
-    tool_num: i16,
-    state: State<'_, AppState>,
-) -> Result<f64, String> {
-    let handle = state
-        .handle_table
-        .get(&machine_id)
-        .ok_or_else(|| "해당 장비를 찾을 수 없습니다.".to_string())?;
-
-    // fwlib.rs에 구현된 rdtofs 호출
-    let res = handle.rdtofs(tool_num, 0).map_err(|e| e.to_string())?;
-
-    // raw 데이터를 mm 단위로 변환 (0.001 기준)
-    Ok(res.data as f64 / 1000.0)
-}
-
-#[tauri::command]
-fn verify_password(input: String, state: State<AdminConfig>) -> bool {
+fn verify_password(input: String, state: State<'_, AppState>) -> bool {
     input == state.password
 }
 
 #[tauri::command]
-fn log_offset_change(
+async fn get_offset_history(
     machine_id: u16,
     tool_num: i16,
-    old_val: f64,
-    new_val: f64,
-) -> Result<(), String> {
-    let now = Local::now();
+    limit: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<OffsetLog>, String> {
+    HistoryLogger::get_history(state.log_path.clone(), machine_id, tool_num, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
 
-    if let Err(e) = fs::create_dir_all("log") {
-        return Err(format!("로그 폴더 생성 실패: {}", e));
+#[tauri::command]
+async fn get_latest_offset_log(
+    machine_id: u16,
+    tool_num: i16,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<OffsetLog>, String> {
+    HistoryLogger::get_latest_log(state.log_path.clone(), machine_id, tool_num)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_all_machine_states(state: State<'_, AppState>) -> Result<Vec<MachineUiState>, String> {
+    let tool_data_map = state.tool_data.lock().unwrap().clone();
+    let batch_size_map = state.batch_size.lock().unwrap().clone();
+
+    let mut results = Vec::new();
+    let mut keys: Vec<u16> = tool_data_map.keys().cloned().collect();
+    keys.sort();
+
+    let handle_table = state.handle_table.clone();
+
+    for id in keys {
+        if let Some((upper, lower)) = tool_data_map.get(&id) {
+            let size = *batch_size_map.get(&id).unwrap_or(&5);
+
+            let upper_log =
+                HistoryLogger::get_latest_log(state.log_path.clone(), id, upper.tool_num)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            let lower_log =
+                HistoryLogger::get_latest_log(state.log_path.clone(), id, lower.tool_num)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+            let client = handle_table
+                .get(&id)
+                .ok_or_else(|| format!("No CNC client found for machine {}", id))?;
+
+            let upper_life = client
+                .read_life(upper.tool_num)
+                .map_err(|e| format!("Failed to read upper tool life for machine {}: {}", id, e))?;
+            let lower_life = client
+                .read_life(lower.tool_num)
+                .map_err(|e| format!("Failed to read lower tool life for machine {}: {}", id, e))?;
+
+            let upper_count = client.read_count(upper.tool_num).map_err(|e| {
+                format!("Failed to read upper tool count for machine {}: {}", id, e)
+            })?;
+            let lower_count = client.read_count(lower.tool_num).map_err(|e| {
+                format!("Failed to read lower tool count for machine {}: {}", id, e)
+            })?;
+
+            let upper_ui = ToolUiState {
+                data: upper.clone(),
+                current_offset: upper_log
+                    .as_ref()
+                    .map_or(0.0, |log| log.new_value as f64 / 10000.0),
+                previous_offset: upper_log
+                    .as_ref()
+                    .map_or(0.0, |log| log.old_value as f64 / 10000.0),
+                life: upper_life.raw(),
+                count: upper_count.raw(),
+            };
+
+            let lower_ui = ToolUiState {
+                data: lower.clone(),
+                current_offset: lower_log
+                    .as_ref()
+                    .map_or(0.0, |log| log.new_value as f64 / 10000.0),
+                previous_offset: lower_log
+                    .as_ref()
+                    .map_or(0.0, |log| log.old_value as f64 / 10000.0),
+                life: lower_life.raw(),
+                count: lower_count.raw(),
+            };
+
+            results.push(MachineUiState {
+                machine_id: id,
+                upper_tool: upper_ui,
+                lower_tool: lower_ui,
+                batch_size: size,
+            });
+        }
     }
+    Ok(results)
+}
 
-    let file_name = format!("log/{}.txt", now.format("%Y-%m-%d"));
+#[tauri::command]
+async fn update_tool_settings(
+    machine_id: u16,
+    is_upper: bool, // true: 황삭, false: 정삭
+    basic_size: Option<f64>,
+    manual_offset: Option<f64>,
+    offset_rate: Option<f64>,
+    active: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut tool_data_map = state.tool_data.lock().unwrap();
 
-    let log_msg = format!(
-        "[{}] Machine: #{} | Tool: T{} | Offset Changed: {:.3} -> {:.3}\n",
-        now.format("%H:%M:%S"),
-        machine_id,
-        tool_num,
-        old_val,
-        new_val
-    );
+    if let Some((upper, lower)) = tool_data_map.get_mut(&machine_id) {
+        let target_tool = if is_upper { upper } else { lower };
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&file_name)
-        .map_err(|e| format!("로그 파일 열기 실패 ({}): {}", file_name, e))?;
+        if let Some(v) = basic_size {
+            target_tool.basic_size = v;
+        }
+        if let Some(v) = manual_offset {
+            target_tool.manual_offset = v;
+        }
+        if let Some(v) = offset_rate {
+            target_tool.offset_rate = v;
+        }
+        if let Some(v) = active {
+            target_tool.active = v;
+        }
 
-    file.write_all(log_msg.as_bytes())
-        .map_err(|e| format!("로그 쓰기 실패: {}", e))?;
+        Ok(())
+    } else {
+        Err("Machine ID not found".to_string())
+    }
+}
 
-    println!("로그 저장됨: {} >> {}", file_name, log_msg.trim());
+#[tauri::command]
+async fn update_batch_size(
+    machine_id: u16,
+    new_size: usize,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut batch_map = state.batch_size.lock().unwrap();
+    if new_size > 30 {
+        return Err("Max batch size is 30".to_string());
+    }
+    batch_map.insert(machine_id, new_size);
     Ok(())
+}
+
+#[tauri::command]
+fn get_font_size(state: State<'_, AppState>) -> u32 {
+    state.font_size
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -166,26 +245,44 @@ pub fn run() {
                     }
                 }
             }
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let (gauge_tx, gauge_rx) = tokio::sync::broadcast::channel(100);
             let handle_table = Arc::new(handle_table);
-            let master_config = Arc::new(config.master.clone());
-            app.manage(AppState {
+            let app_state = AppState {
                 handle_table: handle_table.clone(),
-                config: Mutex::new(config.clone()),
-            });
-            let batch_size = config.gauge.gauge_batch_size;
+                tool_data: Arc::new(Mutex::new(config.mapping.tool_data.clone())),
+                batch_size: Arc::new(Mutex::new(config.mapping.batch_size)),
+                password: config.admin.password.clone(),
+                log_path: config.log_path.clone(),
+                font_size: config.ui.font_size,
+            };
+            let handle_table_clone = Arc::clone(&app_state.handle_table);
+            let tool_data_clone = Arc::clone(&app_state.tool_data);
+            let batch_size_clone = Arc::clone(&app_state.batch_size);
             tauri::async_runtime::spawn(async move {
-                spawn_cnc_loop(rx, handle_table, master_config, batch_size);
+                match spawn_cnc_loop(
+                    gauge_rx,
+                    handle_table_clone,
+                    tool_data_clone,
+                    batch_size_clone,
+                    Arc::new(HistoryLogger::new(&config.log_path)),
+                ) {
+                    Ok(_) => println!("CNC loop exited gracefully"),
+                    Err(e) => eprintln!("CNC loop encountered an error: {}", e),
+                };
             });
 
             tauri::async_runtime::spawn(async move {
-                spawn_gauge_stream(
+                match spawn_gauge_stream(
                     &config.gauge.ip,
                     config.gauge.port,
                     &config.gauge.command_hex,
-                    tx,
-                );
+                    gauge_tx,
+                ) {
+                    Ok(_) => println!("Gauge stream exited gracefully"),
+                    Err(e) => eprintln!("Gauge stream encountered an error: {}", e),
+                };
             });
+            app.manage(app_state);
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -193,13 +290,10 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 let app_handle = window.app_handle();
                 if let Some(state) = app_handle.try_state::<AppState>() {
-                    if let Ok(config_guard) = state.config.lock() {
-                        println!("Exiting application, Save config: {:?}", *config_guard);
-                        if let Err(e) = config_guard.save("config.json") {
-                            println!("Failed to save config: {}", e);
-                        } else {
-                            println!("Config saved successfully.");
-                        }
+                    let mut config = AppConfig::load("config.json");
+                    config.update_from_state(&state);
+                    if let Err(e) = config.save("config.json") {
+                        eprintln!("Failed to save config: {}", e);
                     }
                 }
                 #[cfg(target_os = "linux")]
@@ -209,8 +303,13 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            get_machine_status,
-            read_tool_offset
+            verify_password,
+            get_offset_history,
+            get_latest_offset_log,
+            get_all_machine_states,
+            update_tool_settings,
+            update_batch_size,
+            get_font_size,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
