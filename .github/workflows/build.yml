@@ -58,3 +58,4 @@ jobs:
           releaseBody: "Factory Test Build from GitHub Actions"
           releaseDraft: true
           prerelease: false
+          allowUpdates: true
