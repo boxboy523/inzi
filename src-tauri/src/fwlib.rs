@@ -1,9 +1,7 @@
 use std::os::raw::{c_char, c_long, c_short, c_ushort};
 
-use std::sync::{Arc, Mutex, RwLock};
-
-use crate::io::{Join, IO};
 use anyhow::anyhow;
+use std::sync::{Arc, Mutex, RwLock};
 
 pub type FwlibHndl = c_ushort;
 
@@ -100,7 +98,7 @@ extern "C" {
 
 #[derive(Debug, Clone)]
 pub struct FocasClient {
-    handle: Arc<Mutex<IO<FwlibHndl>>>,
+    handle: Arc<Mutex<FwlibHndl>>,
     pub ip: String,
     pub port: i16,
     busy: Arc<RwLock<bool>>,
@@ -111,7 +109,7 @@ impl FocasClient {
     pub fn new(ip: &str, port: i16, timeout: i32) -> Result<Self, String> {
         if ip == "dummy" {
             return Ok(FocasClient {
-                handle: Arc::new(Mutex::new(IO::new(0))),
+                handle: Arc::new(Mutex::new(0)),
                 ip: ip.to_string(),
                 port,
                 busy: Arc::new(RwLock::new(false)),
@@ -139,7 +137,7 @@ impl FocasClient {
             Err(format!("Failed to allocate handle: error code {}", ret))
         } else {
             Ok(FocasClient {
-                handle: Arc::new(Mutex::new(IO::new(handle))),
+                handle: Arc::new(Mutex::new(handle)),
                 ip: ip.to_string(),
                 port,
                 busy: Arc::new(RwLock::new(false)),
@@ -170,9 +168,9 @@ impl FocasClient {
                 *guard
             };
             self.set_busy(true);
-            let ret = current_handle.and_then(|hndl| unsafe {
+            let ret = unsafe {
                 let ret = cnc_wrtofs(
-                    hndl,
+                    current_handle,
                     number as c_short,
                     ofs_type as c_short,
                     8,
@@ -183,7 +181,7 @@ impl FocasClient {
                 } else {
                     Ok(())
                 }
-            });
+            };
 
             if ret.is_ok() {
                 self.set_busy(false);
@@ -196,31 +194,23 @@ impl FocasClient {
                 self.port,
                 ret.err().unwrap()
             );
-
-            current_handle.consume(|hndl| unsafe {
-                cnc_freelibhndl(hndl);
-            });
-
+            unsafe {
+                cnc_freelibhndl(current_handle);
+            }
             loop {
-                let new_handle = match IO::<FwlibHndl>::init_and_then(|| {
-                    let mut new_handle: FwlibHndl = 0;
-                    let ip_cstr = std::ffi::CString::new(self.ip.as_str()).unwrap();
-                    let conn_ret = unsafe {
-                        cnc_allclibhndl3(ip_cstr.as_ptr(), self.port as c_short, 1, &mut new_handle)
-                    };
-                    if conn_ret == 0 {
-                        Ok(new_handle)
-                    } else {
-                        Err(anyhow::anyhow!("Reconnection failed (Code: {}).", conn_ret))
-                    }
-                }) {
-                    Ok(handle) => handle,
-                    Err(e) => {
-                        eprintln!("Reconnection attempt failed: {}. Retrying in 5s...", e);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                        continue;
-                    }
+                let mut new_handle: FwlibHndl = 0;
+                let ip_cstr = std::ffi::CString::new(self.ip.as_str()).unwrap();
+                let conn_ret = unsafe {
+                    cnc_allclibhndl3(ip_cstr.as_ptr(), self.port as c_short, 1, &mut new_handle)
                 };
+                if conn_ret != 0 {
+                    eprintln!(
+                        "Reconnection attempt failed for CNC at {}:{}. Error code: {}. Retrying in 5s...",
+                        self.ip, self.port, conn_ret
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    continue;
+                }
 
                 println!("Successfully reconnected to CNC at {}", self.ip);
                 let mut guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
@@ -230,7 +220,7 @@ impl FocasClient {
         }
     }
 
-    pub fn rdtofs(&self, number: i16, ofs_type: i16) -> anyhow::Result<IO<ODBTOFS>> {
+    pub fn rdtofs(&self, number: i16, ofs_type: i16) -> anyhow::Result<ODBTOFS> {
         if self.is_busy() {
             anyhow::bail!("CNC is currently busy with another operation");
         }
@@ -241,95 +231,97 @@ impl FocasClient {
                 "Dummy read: number={}, ofs_type={}, value={}, life={}, count={}",
                 number, ofs_type, value, state.life, state.count
             );
-            return Ok(IO::new(ODBTOFS {
+            return Ok(ODBTOFS {
                 datano: number as c_short,
                 ofs_type: ofs_type as c_short,
                 data: value as c_long,
-            }));
+            });
         }
         let current_handle = {
             let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
             *guard
         };
-        let tofs = IO::new(ODBTOFS {
+        let mut tofs = ODBTOFS {
             datano: 0,
             ofs_type: 0,
             data: 0,
-        });
-        (current_handle, tofs)
-            .join()
-            .and_then(|(hndl, mut tofs)| unsafe {
-                let ret = cnc_rdtofs(
-                    hndl,
-                    number as c_short,
-                    ofs_type as c_short,
-                    8,
-                    &mut tofs as *mut ODBTOFS,
-                );
-                if ret == 0 {
-                    Ok(tofs)
-                } else {
-                    Err(anyhow::anyhow!("Failed to read TOFS: error code {}", ret))
-                }
-            })
+        };
+        unsafe {
+            let ret = cnc_rdtofs(
+                current_handle,
+                number as c_short,
+                ofs_type as c_short,
+                8,
+                &mut tofs as *mut ODBTOFS,
+            );
+            if ret == 0 {
+                Ok(tofs)
+            } else {
+                Err(anyhow::anyhow!("Failed to read TOFS: error code {}", ret))
+            }
+        }
     }
 
-    pub fn read_life(&self, number: i16) -> anyhow::Result<IO<i16>> {
+    pub fn read_life(&self, number: i16) -> anyhow::Result<i16> {
         if self.is_busy() {
             anyhow::bail!("CNC is currently busy with another operation");
         }
         if let Some(dummy) = &self.dummy_state {
             let state = dummy.lock().unwrap();
-            return Ok(IO::new(state.life));
+            return Ok(state.life);
         }
         let current_handle = {
             let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
             *guard
         };
-        let life = IO::new(ODBTLIFE3 {
+        let mut life = ODBTLIFE3 {
             datano: 0,
             dummy: 0,
             data: 0,
-        });
-        (current_handle, life)
-            .join()
-            .and_then(|(hndl, mut life)| unsafe {
-                let ret = cnc_rdlife(hndl, number as c_short, &mut life as *mut ODBTLIFE3);
-                if ret == 0 {
-                    Ok(life.data as i16)
-                } else {
-                    Err(anyhow::anyhow!("Failed to read life: error code {}", ret))
-                }
-            })
+        };
+        unsafe {
+            let ret = cnc_rdlife(
+                current_handle,
+                number as c_short,
+                &mut life as *mut ODBTLIFE3,
+            );
+            if ret == 0 {
+                Ok(life.data as i16)
+            } else {
+                Err(anyhow::anyhow!("Failed to read life: error code {}", ret))
+            }
+        }
     }
 
-    pub fn read_count(&self, number: i16) -> anyhow::Result<IO<i16>> {
+    pub fn read_count(&self, number: i16) -> anyhow::Result<i16> {
         if self.is_busy() {
             anyhow::bail!("CNC is currently busy with another operation");
         }
         if let Some(dummy) = &self.dummy_state {
             let state = dummy.lock().unwrap();
-            return Ok(IO::new(state.count));
+            return Ok(state.count);
         }
         let current_handle = {
             let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
             *guard
         };
-        let count = IO::new(ODBTLIFE3 {
+        let mut count = ODBTLIFE3 {
             datano: 0,
             dummy: 0,
             data: 0,
-        });
-        (current_handle, count)
-            .join()
-            .and_then(|(hndl, mut count)| unsafe {
-                let ret = cnc_rdcount(hndl, number as c_short, &mut count as *mut ODBTLIFE3);
-                if ret == 0 {
-                    Ok(count.data as i16)
-                } else {
-                    Err(anyhow::anyhow!("Failed to read count: error code {}", ret))
-                }
-            })
+        };
+        unsafe {
+            let ret = cnc_rdcount(
+                current_handle,
+                number as c_short,
+                &mut count as *mut ODBTLIFE3,
+            );
+            if ret == 0 {
+                Ok(count.data as i16)
+            } else {
+                Err(anyhow::anyhow!("Failed to read count: error code {}", ret))
+            }
+        }
     }
 
     pub fn is_connected(&self) -> bool {
@@ -337,15 +329,7 @@ impl FocasClient {
             return true;
         }
         match self.handle.lock() {
-            Ok(guard) => (*guard)
-                .consume_and_then(|hndl| {
-                    if hndl != 0 {
-                        Ok(())
-                    } else {
-                        Err(anyhow::anyhow!("Invalid handle"))
-                    }
-                })
-                .is_ok(),
+            Ok(guard) => *guard != 0,
             Err(_) => false,
         }
     }
@@ -368,9 +352,15 @@ impl Drop for FocasClient {
             return;
         }
         if let Ok(guard) = self.handle.lock() {
-            (*guard).consume(|hndl| unsafe {
-                cnc_freelibhndl(hndl);
-            });
+            let handle = *guard;
+            if handle != 0 {
+                println!("Freeing Focas handle for {}", self.ip);
+                unsafe {
+                    cnc_freelibhndl(handle);
+                }
+            } else {
+                println!("No valid handle to free for {}", self.ip);
+            }
         }
     }
 }

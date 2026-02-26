@@ -25,7 +25,9 @@ pub struct UiConfig {
 pub struct GaugeConfig {
     pub ip: String,
     pub port: u16,
-    pub command_hex: String, // "500000FFFF..." 같은 명령어
+    pub read_req_hex: String,
+    pub write_req_hex_0: String,
+    pub write_req_hex_1: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -59,7 +61,7 @@ impl Default for AppConfig {
                         basic_size: 48.0,
                         manual_offset: 0.0,
                         offset_rate: 1.0,
-                        active: true,
+                        active: false,
                         avg_gauge: None,
                         final_offset: None,
                     },
@@ -69,7 +71,7 @@ impl Default for AppConfig {
                         basic_size: 48.0,
                         manual_offset: 0.0,
                         offset_rate: 1.0,
-                        active: true,
+                        active: false,
                         avg_gauge: None,
                         final_offset: None,
                     },
@@ -84,7 +86,7 @@ impl Default for AppConfig {
                         basic_size: 48.0,
                         manual_offset: 0.0,
                         offset_rate: 1.0,
-                        active: true,
+                        active: false,
                         avg_gauge: None,
                         final_offset: None,
                     },
@@ -94,7 +96,7 @@ impl Default for AppConfig {
                         basic_size: 48.0,
                         manual_offset: 0.0,
                         offset_rate: 1.0,
-                        active: true,
+                        active: false,
                         avg_gauge: None,
                         final_offset: None,
                     },
@@ -109,7 +111,7 @@ impl Default for AppConfig {
                         basic_size: 48.0,
                         manual_offset: 0.0,
                         offset_rate: 1.0,
-                        active: true,
+                        active: false,
                         avg_gauge: None,
                         final_offset: None,
                     },
@@ -119,7 +121,7 @@ impl Default for AppConfig {
                         basic_size: 48.0,
                         manual_offset: 0.0,
                         offset_rate: 1.0,
-                        active: true,
+                        active: false,
                         avg_gauge: None,
                         final_offset: None,
                     },
@@ -129,27 +131,29 @@ impl Default for AppConfig {
         let batch_size = HashMap::from([(0, 5), (1, 5), (2, 5)]);
         Self {
             gauge: GaugeConfig {
-                ip: "192.168.0.100".to_string(),
+                ip: "127.0.0.1".to_string(),
                 port: 5002,
-                command_hex: "500000FFFF03000E00200001140000D41700A801000000".to_string(),
+                read_req_hex: "500000FFFF03000C00100001040000701700A81900".to_string(),
+                write_req_hex_0: "500000FFFF03000E00200001140000D41700A801000100".to_string(),
+                write_req_hex_1: "500000FFFF03000E00200001140000D41700A801000000".to_string(),
             },
             machines: vec![
                 MachineConfig {
                     id: 0,
                     name: "Lathe #1 (OP-10)".to_string(),
-                    ip: "192.168.0.144".to_string(),
+                    ip: "dummy".to_string(),
                     port: 8193,
                 },
                 MachineConfig {
                     id: 1,
                     name: "Lathe #1 (OP-10)".to_string(),
-                    ip: "192.168.0.145".to_string(),
+                    ip: "dummy".to_string(),
                     port: 8193,
                 },
                 MachineConfig {
                     id: 2,
                     name: "Lathe #2 (OP-20)".to_string(),
-                    ip: "192.168.0.146".to_string(),
+                    ip: "dummy".to_string(),
                     port: 8193,
                 },
             ],

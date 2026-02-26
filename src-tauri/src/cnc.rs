@@ -195,6 +195,80 @@ pub fn spawn_cnc_loop(
     Ok(())
 }
 
+pub async fn update_offset_logs(
+    logger: Arc<HistoryLogger>,
+    handle_table: Arc<HashMap<u16, FocasClient>>,
+    tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
+) {
+    let mut last_offsets: HashMap<(u16, i16), i32> = HashMap::new();
+    loop {
+        tool_data
+            .lock()
+            .unwrap()
+            .iter()
+            .for_each(|(&machine_id, (tool_upper, tool_lower))| {
+                if let Some(client) = handle_table.get(&machine_id) {
+                    if !client.is_connected() || client.is_busy() {
+                        return;
+                    }
+                    if let Ok(current_upper) = client.rdtofs(tool_upper.tool_num, 0) {
+                        let current_upper_value = current_upper.data as i32;
+                        let last_upper_value = last_offsets
+                            .get(&(machine_id, tool_upper.tool_num))
+                            .cloned()
+                            .unwrap_or(current_upper_value);
+                        if current_upper_value != last_upper_value {
+                            println!(
+                                "Offset change detected for machine {}, tool {}: {} -> {}",
+                                machine_id,
+                                tool_upper.tool_num,
+                                last_upper_value,
+                                current_upper_value
+                            );
+                            logger.log(OffsetLog {
+                                timestamp: chrono::Utc::now(),
+                                machine_id,
+                                tool_num: tool_upper.tool_num,
+                                old_value: last_upper_value,
+                                change_amount: current_upper_value - last_upper_value,
+                                new_value: current_upper_value,
+                                success: true,
+                            });
+                        }
+                        last_offsets.insert((machine_id, tool_upper.tool_num), current_upper_value);
+                    }
+                    if let Ok(current_lower) = client.rdtofs(tool_lower.tool_num, 0) {
+                        let current_lower_value = current_lower.data as i32;
+                        let last_lower_value = last_offsets
+                            .get(&(machine_id, tool_lower.tool_num))
+                            .cloned()
+                            .unwrap_or(current_lower_value);
+                        if current_lower_value != last_lower_value {
+                            println!(
+                                "Offset change detected for machine {}, tool {}: {} -> {}",
+                                machine_id,
+                                tool_lower.tool_num,
+                                last_lower_value,
+                                current_lower_value
+                            );
+                            logger.log(OffsetLog {
+                                timestamp: chrono::Utc::now(),
+                                machine_id,
+                                tool_num: tool_lower.tool_num,
+                                old_value: last_lower_value,
+                                change_amount: current_lower_value - last_lower_value,
+                                new_value: current_lower_value,
+                                success: true,
+                            });
+                        }
+                        last_offsets.insert((machine_id, tool_lower.tool_num), current_lower_value);
+                    }
+                }
+            });
+        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+    }
+}
+
 async fn write_offset_to_cnc(
     handle_table: Arc<HashMap<u16, FocasClient>>,
     logger: Arc<HistoryLogger>,
@@ -205,24 +279,19 @@ async fn write_offset_to_cnc(
     if let Some(client) = handle_table.get(&machine_id) {
         let current_offset = client.rdtofs(tool_num, 0)?;
         let client_clone = client.clone();
-        current_offset
-            .async_and_then(move |current| async move {
-                let old_offset = current.data as i32;
-                let new_offset = current.data as i32 + offset_diff;
-                let result = client_clone.wrtofs(tool_num, 0, new_offset).await;
+        let old_offset = current_offset.data as i32;
+        let new_offset = current_offset.data as i32 + offset_diff;
+        let result = client_clone.wrtofs(tool_num, 0, new_offset).await;
 
-                logger.log(OffsetLog {
-                    timestamp: chrono::Utc::now(),
-                    machine_id,
-                    tool_num,
-                    old_value: old_offset,
-                    change_amount: offset_diff,
-                    new_value: new_offset,
-                    success: result.is_ok(),
-                });
-                result
-            })
-            .await?;
+        logger.log(OffsetLog {
+            timestamp: chrono::Utc::now(),
+            machine_id,
+            tool_num,
+            old_value: old_offset,
+            change_amount: offset_diff,
+            new_value: new_offset,
+            success: result.is_ok(),
+        });
         Ok(())
     } else {
         Err(anyhow!("No CNC client found for machine {}", machine_id))

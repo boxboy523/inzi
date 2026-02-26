@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::{collections::HashMap, sync::Mutex};
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri::{Manager, State};
 
-use crate::cnc::ToolData;
+use crate::cnc::{update_offset_logs, ToolData};
 use crate::logger::HistoryLogger;
 use crate::{
     cnc::spawn_cnc_loop, config::AppConfig, fwlib::FocasClient, gauge::spawn_gauge_stream,
@@ -15,8 +15,16 @@ pub mod cnc;
 pub mod config;
 pub mod fwlib;
 pub mod gauge;
-pub mod io;
 pub mod logger;
+
+#[derive(Debug, Clone)]
+pub struct HexCommands {
+    pub read_req_hex: Vec<u8>,
+    pub write_req_hex_0: Vec<u8>,
+    pub write_req_hex_1: Vec<u8>,
+}
+
+static HEX_CMDS: OnceLock<HexCommands> = OnceLock::new();
 
 pub struct AppState {
     pub handle_table: Arc<HashMap<u16, FocasClient>>,
@@ -128,26 +136,28 @@ async fn get_all_machine_states(state: State<'_, AppState>) -> Result<Vec<Machin
 
             let upper_ui = ToolUiState {
                 data: upper.clone(),
-                current_offset: upper_log
-                    .as_ref()
-                    .map_or(0.0, |log| log.new_value as f64 / 10000.0),
+                current_offset: client
+                    .rdtofs(upper.tool_num, 0)
+                    .map(|v| v.data as f64 / 10000.0)
+                    .unwrap_or(0.0),
                 previous_offset: upper_log
                     .as_ref()
                     .map_or(0.0, |log| log.old_value as f64 / 10000.0),
-                life: upper_life.raw(),
-                count: upper_count.raw(),
+                life: upper_life,
+                count: upper_count,
             };
 
             let lower_ui = ToolUiState {
                 data: lower.clone(),
-                current_offset: lower_log
-                    .as_ref()
-                    .map_or(0.0, |log| log.new_value as f64 / 10000.0),
+                current_offset: client
+                    .rdtofs(lower.tool_num, 0)
+                    .map(|v| v.data as f64 / 10000.0)
+                    .unwrap_or(0.0),
                 previous_offset: lower_log
                     .as_ref()
                     .map_or(0.0, |log| log.old_value as f64 / 10000.0),
-                life: lower_life.raw(),
-                count: lower_count.raw(),
+                life: lower_life,
+                count: lower_count,
             };
 
             results.push(MachineUiState {
@@ -169,6 +179,7 @@ async fn update_tool_settings(
     manual_offset: Option<f64>,
     offset_rate: Option<f64>,
     active: Option<bool>,
+    tool_num: Option<i16>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let mut tool_data_map = state.tool_data.lock().unwrap();
@@ -187,6 +198,9 @@ async fn update_tool_settings(
         }
         if let Some(v) = active {
             target_tool.active = v;
+        }
+        if let Some(v) = tool_num {
+            target_tool.tool_num = v;
         }
 
         Ok(())
@@ -245,8 +259,20 @@ pub fn run() {
                     }
                 }
             }
+            let hex_cmds = HexCommands {
+                read_req_hex: hex::decode(&config.gauge.read_req_hex)
+                    .expect("Invalid read_req_hex in config"),
+                write_req_hex_0: hex::decode(&config.gauge.write_req_hex_0)
+                    .expect("Invalid write_req_hex_0 in config"),
+                write_req_hex_1: hex::decode(&config.gauge.write_req_hex_1)
+                    .expect("Invalid write_req_hex_1 in config"),
+            };
+            HEX_CMDS.set(hex_cmds).unwrap_or_else(|_| {
+                panic!("Failed to set HEX_CMDS from config. This should never happen since it's only set once.")
+            });
             let (gauge_tx, gauge_rx) = tokio::sync::broadcast::channel(100);
             let handle_table = Arc::new(handle_table);
+            let history_logger = Arc::new(HistoryLogger::new(&config.log_path));
             let app_state = AppState {
                 handle_table: handle_table.clone(),
                 tool_data: Arc::new(Mutex::new(config.mapping.tool_data.clone())),
@@ -258,24 +284,31 @@ pub fn run() {
             let handle_table_clone = Arc::clone(&app_state.handle_table);
             let tool_data_clone = Arc::clone(&app_state.tool_data);
             let batch_size_clone = Arc::clone(&app_state.batch_size);
+            let history_logger_clone = Arc::clone(&history_logger);
             tauri::async_runtime::spawn(async move {
                 match spawn_cnc_loop(
                     gauge_rx,
                     handle_table_clone,
                     tool_data_clone,
                     batch_size_clone,
-                    Arc::new(HistoryLogger::new(&config.log_path)),
+                    history_logger_clone,
                 ) {
                     Ok(_) => println!("CNC loop exited gracefully"),
                     Err(e) => eprintln!("CNC loop encountered an error: {}", e),
                 };
             });
 
+            let handle_table_clone = Arc::clone(&app_state.handle_table);
+            let tool_data_clone = Arc::clone(&app_state.tool_data);
+            let history_logger_clone = Arc::clone(&history_logger);
+            tauri::async_runtime::spawn(async move {
+                update_offset_logs(history_logger_clone, handle_table_clone, tool_data_clone).await;
+            });
+
             tauri::async_runtime::spawn(async move {
                 match spawn_gauge_stream(
                     &config.gauge.ip,
                     config.gauge.port,
-                    &config.gauge.command_hex,
                     gauge_tx,
                 ) {
                     Ok(_) => println!("Gauge stream exited gracefully"),
@@ -291,6 +324,15 @@ pub fn run() {
                 let app_handle = window.app_handle();
                 if let Some(state) = app_handle.try_state::<AppState>() {
                     let mut config = AppConfig::load("config.json");
+                    state
+                        .tool_data
+                        .lock()
+                        .unwrap()
+                        .iter_mut()
+                        .for_each(|(_, (upper, lower))| {
+                            upper.active = false;
+                            lower.active = false;
+                        });
                     config.update_from_state(&state);
                     if let Err(e) = config.save("config.json") {
                         eprintln!("Failed to save config: {}", e);

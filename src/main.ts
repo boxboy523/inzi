@@ -85,11 +85,11 @@ function renderTable() {
     bodyHtml += `</tr>`;
 
     // 보정 치수 헤더
-    bodyHtml += `<tr class="bg-[#00B0F0] text-white font-bold h-8 text-xs">
+    bodyHtml += `<tr class="bg-[#00B0F0] text-white font-bold h-8 text-xs align-middle">
         <td rowspan="3" class="border border-white text-sm">보정 치수</td>`;
     machines.forEach(() => {
         bodyHtml += `<td class="border border-white p-0">
-            <div class="grid grid-cols-2 h-full"><div class="border-r border-white/30">자동보정값</div><div>수동보정값</div></div>
+            <div class="grid grid-cols-2 h-full align-middle"><div class="border-r border-white/30">자동보정값</div><div>수동보정값</div></div>
         </td>`;
     });
     bodyHtml += `</tr>`;
@@ -134,8 +134,11 @@ function renderTable() {
         const upActive = m.upper_tool.active;
         const dnActive = m.lower_tool.active;
         bodyHtml += `<td class="border border-gray-400 p-1">
-            <div class="flex justify-between items-center mb-1 bg-yellow-200 p-1 rounded">
-                <span class="text-xs font-bold">황삭(${m.upper_tool.tool_num})</span>
+            <div class="flex justify-center items-center gap-2 mb-1 bg-yellow-200 p-1 rounded">
+                <span class="text-xs font-bold cursor-pointer hover:bg-yellow-400 p-0.5 rounded transition"
+                      data-action="edit" data-id="${m.machine_id}" data-upper="true" data-field="tool_num" data-title="황삭 툴 번호">
+                    황삭(T${m.upper_tool.tool_num})
+                </span>
                 <button data-action="toggle" data-id="${m.machine_id}" data-upper="true" 
                     class="${upActive ? 'bg-green-600' : 'bg-red-500'} text-white text-xs px-2 py-0.5 rounded shadow">
                     ${upActive ? 'ON' : 'OFF'}
@@ -145,8 +148,10 @@ function renderTable() {
                     ${(m.upper_tool.offset_rate * 100).toFixed(0)}%
                 </button>
             </div>
-            <div class="flex justify-between items-center bg-yellow-200 p-1 rounded">
-                <span class="text-xs font-bold">정삭(${m.lower_tool.tool_num})</span>
+            <div class="flex justify-center items-center gap-2 bg-yellow-200 p-1 rounded">
+                <span class="text-xs font-bold cursor-pointer hover:bg-yellow-400 p-0.5 rounded transition"
+                      data-action="edit" data-id="${m.machine_id}" data-upper="false" data-field="tool_num" data-title="정삭 툴 번호">
+                    정삭(T${m.lower_tool.tool_num})
                 <button data-action="toggle" data-id="${m.machine_id}" data-upper="false" 
                     class="${dnActive ? 'bg-green-600' : 'bg-red-500'} text-white text-xs px-2 py-0.5 rounded shadow">
                     ${dnActive ? 'ON' : 'OFF'}
@@ -276,14 +281,14 @@ document.addEventListener('click', async (e) => {
             if (editInput.value.startsWith('-')) {
                 editInput.value = editInput.value.substring(1);
             } else {
-                if (editInput.value !== '0') editInput.value = '-' + editInput.value; editInput.value = '-' + editInput.value;
+                if (editInput.value !== '0') editInput.value = '-' + editInput.value;
             }
         } else {
             if (editInput.value === '0' && key !== '.') {
                 editInput.value = key;
             } else {
                 editInput.value += key;
-            }editInput.value += key;
+            }
         }
         return;
     }
@@ -381,12 +386,13 @@ document.getElementById('btn-edit-save')!.addEventListener('click', async () => 
             const args: any = {
                 machineId: editContext.machineId,
                 isUpper: editContext.isUpper,
-                basicSize: null, manualOffset: null, offsetRate: null, active: null
+                basicSize: null, manualOffset: null, offsetRate: null, active: null, toolNum: null
             };
             
             if (editContext.field === 'basic_size') args.basicSize = finalVal;
             if (editContext.field === 'manual_offset') args.manualOffset = finalVal;
             if (editContext.field === 'offset_rate') args.offsetRate = finalVal;
+            if (editContext.field === 'tool_num') args.toolNum = Math.floor(finalVal);
 
             await invoke('update_tool_settings', args);
         }

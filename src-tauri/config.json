@@ -2,7 +2,9 @@
   "gauge": {
     "ip": "127.0.0.1",
     "port": 5002,
-    "command_hex": "500000FFFF03000E00200001140000D41700A801000000"
+    "read_req_hex": "500000FFFF03000C00100001040000701700A81900",
+    "write_req_hex_0": "500000FFFF03000E00200001140000D41700A801000100",
+    "write_req_hex_1": "500000FFFF03000E00200001140000D41700A801000000"
   },
   "machines": [
     {
@@ -26,26 +28,26 @@
   ],
   "mapping": {
     "tool_data": {
-      "0": [
+      "2": [
         {
-          "machine_id": 0,
+          "machine_id": 2,
           "tool_num": 11,
           "basic_size": 48.0,
           "manual_offset": 0.0,
           "offset_rate": 1.0,
-          "active": true,
-          "avg_gauge": null,
-          "final_offset": null
+          "active": false,
+          "avg_gauge": 14.0048,
+          "final_offset": 33.9952
         },
         {
-          "machine_id": 0,
+          "machine_id": 2,
           "tool_num": 12,
           "basic_size": 48.0,
           "manual_offset": 0.0,
           "offset_rate": 1.0,
-          "active": true,
-          "avg_gauge": null,
-          "final_offset": null
+          "active": false,
+          "avg_gauge": 14.0048,
+          "final_offset": 33.9952
         }
       ],
       "1": [
@@ -55,9 +57,9 @@
           "basic_size": 48.0,
           "manual_offset": 0.0,
           "offset_rate": 1.0,
-          "active": true,
-          "avg_gauge": null,
-          "final_offset": null
+          "active": false,
+          "avg_gauge": 38.6715,
+          "final_offset": 9.328499999999998
         },
         {
           "machine_id": 1,
@@ -65,38 +67,38 @@
           "basic_size": 48.0,
           "manual_offset": 0.0,
           "offset_rate": 1.0,
-          "active": true,
-          "avg_gauge": null,
-          "final_offset": null
+          "active": false,
+          "avg_gauge": 38.6715,
+          "final_offset": 9.328499999999998
         }
       ],
-      "2": [
+      "0": [
         {
-          "machine_id": 2,
+          "machine_id": 0,
           "tool_num": 11,
           "basic_size": 48.0,
           "manual_offset": 0.0,
           "offset_rate": 1.0,
-          "active": true,
+          "active": false,
           "avg_gauge": null,
           "final_offset": null
         },
         {
-          "machine_id": 2,
-          "tool_num": 12,
+          "machine_id": 0,
+          "tool_num": 22,
           "basic_size": 48.0,
           "manual_offset": 0.0,
           "offset_rate": 1.0,
-          "active": true,
+          "active": false,
           "avg_gauge": null,
           "final_offset": null
         }
       ]
     },
     "batch_size": {
-      "1": 5,
+      "2": 5,
       "0": 5,
-      "2": 5
+      "1": 5
     }
   },
   "admin": {
@@ -104,6 +106,6 @@
   },
   "log_path": "logs/log.db",
   "ui": {
-    "font_size": 25
+    "font_size": 16
   }
 }
