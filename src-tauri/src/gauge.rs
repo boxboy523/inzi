@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 use tokio::{
-    io::AsyncWriteExt,
     net::TcpStream,
     sync::{
         broadcast::Sender,
@@ -151,7 +150,17 @@ pub struct GaugeResponse {
 
 impl GaugeResponse {
     fn from_bytes(bytes: Vec<u8>) -> Option<Self> {
-        if bytes.len() < 51 {
+        if bytes.len() < 11 {
+            return None;
+        }
+
+        let end_code = u16::from_le_bytes([bytes[9], bytes[10]]);
+        if end_code != 0 {
+            eprintln!("PLC Error Code Received: {:04X}", end_code);
+            return None;
+        }
+
+        if bytes.len() < 40 {
             return None;
         }
         let machine_id = u16::from_le_bytes([bytes[11], bytes[12]]);
@@ -168,7 +177,7 @@ impl GaugeResponse {
         Some(Self {
             machine_id,
             raw_data: hex::encode(&bytes),
-            plc_data_on: plc_data_on == 1,
+            plc_data_on: plc_data_on == 2,
             point,
         })
     }
@@ -226,7 +235,7 @@ pub async fn spawn_dummy_gauge_server(port: u16) {
                         resp[9..11].copy_from_slice(&[0x00, 0x00]);
 
                         // ▼ 매 주기마다 신호를 0 -> 1 -> 0 으로 토글
-                        toggle_on = if toggle_on == 0 { 1 } else { 0 };
+                        toggle_on = if toggle_on == 0 { 2 } else { 0 };
 
                         // D6000: Machine ID
                         resp[11..13].copy_from_slice(&machine_id.to_le_bytes());
@@ -242,10 +251,10 @@ pub async fn spawn_dummy_gauge_server(port: u16) {
                         let frac = (ms % 100) as i16 - 50;
                         let int_val = 48i16;
 
-                        resp[31..33].copy_from_slice(&frac.to_le_bytes());
-                        resp[33..35].copy_from_slice(&int_val.to_le_bytes());
-                        resp[35..37].copy_from_slice(&frac.to_le_bytes());
-                        resp[37..39].copy_from_slice(&int_val.to_le_bytes());
+                        resp[31..33].copy_from_slice(&int_val.to_le_bytes());
+                        resp[33..35].copy_from_slice(&frac.to_le_bytes());
+                        resp[35..37].copy_from_slice(&int_val.to_le_bytes());
+                        resp[37..39].copy_from_slice(&frac.to_le_bytes());
 
                         if socket.write_all(&resp).await.is_err() {
                             break;

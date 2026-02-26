@@ -203,6 +203,12 @@ async fn update_tool_settings(
             target_tool.tool_num = v;
         }
 
+        let mut config = AppConfig::load("config.json");
+        config.update_from_state(&state);
+        if let Err(e) = config.save("config.json") {
+            eprintln!("Config save failed: {}", e);
+        }
+
         Ok(())
     } else {
         Err("Machine ID not found".to_string())
@@ -220,6 +226,11 @@ async fn update_batch_size(
         return Err("Max batch size is 30".to_string());
     }
     batch_map.insert(machine_id, new_size);
+    let mut config = AppConfig::load("config.json");
+    config.update_from_state(&state);
+    if let Err(e) = config.save("config.json") {
+        eprintln!("Config save failed: {}", e);
+    }
     Ok(())
 }
 
