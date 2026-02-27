@@ -1,15 +1,25 @@
-use std::os::raw::{c_char, c_long, c_short, c_ulong, c_ushort};
+use std::os::raw::{c_char, c_long, c_longlong, c_short, c_ulong};
 
 use anyhow::anyhow;
 use std::sync::{Arc, Mutex, RwLock};
 
 pub type FwlibHndl = c_ulong;
 
+// fwlib32(Linux)용: cnc_rdtofs/wrtofs에서 사용
 #[repr(C)]
 pub struct ODBTOFS {
     pub datano: c_short,
     pub ofs_type: c_short,
     pub data: c_long,
+}
+
+// Fwlib64(Windows)용: cnc_rdtofsr/wrtofsr에서 사용
+// IODBTOFSZ: 0i-D/F/TF, 30i, 31i, 32i 계열
+#[repr(C)]
+pub struct IODBTOFSZ {
+    pub datano: c_short,
+    pub ofs_type: c_short,
+    pub data: [c_longlong; 4], // 64비트 × 4 = 32바이트
 }
 
 #[repr(C)]
@@ -21,7 +31,7 @@ pub struct ODBTLIFE3 {
 
 #[derive(Debug)]
 pub struct DummyState {
-    pub offsets: std::collections::HashMap<i16, i32>,
+    pub offsets: std::collections::HashMap<i16, i64>,
     pub life: i16,
     pub count: i16,
 }
@@ -38,20 +48,21 @@ extern "C" {
 
     fn cnc_freelibhndl(flibhndl: FwlibHndl) -> c_short;
 
-    fn cnc_rdtofs(
+    // 0i-TF, 30i 계열: cnc_rdtofsr / cnc_wrtofsr 사용
+    fn cnc_rdtofsr(
         flibhndl: FwlibHndl,
         number: c_short,
         ofs_type: c_short,
         length: c_short,
-        tofs: *mut ODBTOFS,
+        tofs: *mut IODBTOFSZ,
     ) -> c_short;
 
-    fn cnc_wrtofs(
+    fn cnc_wrtofsr(
         flibhndl: FwlibHndl,
         number: c_short,
         ofs_type: c_short,
         length: c_short,
-        data: c_long,
+        data: c_longlong,
     ) -> c_short;
 
     pub fn cnc_rdlife(flibhndl: FwlibHndl, number: c_short, life: *mut ODBTLIFE3) -> c_short;
@@ -71,6 +82,7 @@ extern "C" {
 
     fn cnc_freelibhndl(flibhndl: FwlibHndl) -> c_short;
 
+    // fwlib32는 cnc_rdtofs/wrtofs 그대로 사용
     fn cnc_rdtofs(
         flibhndl: FwlibHndl,
         number: c_short,
@@ -101,7 +113,7 @@ pub struct FocasClient {
     handle: Arc<Mutex<FwlibHndl>>,
     pub ip: String,
     pub port: i16,
-    busy: Arc<RwLock<bool>>,
+    busy: Arc<RwLock<bool>>, 
     dummy_state: Option<Arc<Mutex<DummyState>>>,
 }
 
@@ -154,7 +166,7 @@ impl FocasClient {
             self.set_busy(true);
             let mut state = dummy.lock().unwrap();
             let old_value = state.offsets.get(&number).cloned().unwrap_or(0);
-            state.offsets.insert(number, data);
+            state.offsets.insert(number, data as i64);
             println!(
                 "Dummy write: number={}, ofs_type={}, old_value={}, new_value={}, life={}, count={}",
                 number, ofs_type, old_value, data, state.life, state.count
@@ -176,6 +188,15 @@ impl FocasClient {
             );
             self.set_busy(true);
             let ret = unsafe {
+                #[cfg(target_os = "windows")]
+                let ret = cnc_wrtofsr(
+                    current_handle,
+                    number as c_short,
+                    ofs_type as c_short,
+                    std::mem::size_of::<IODBTOFSZ>() as c_short,
+                    data as c_longlong,
+                );
+                #[cfg(target_os = "linux")]
                 let ret = cnc_wrtofs(
                     current_handle,
                     number as c_short,
@@ -236,7 +257,7 @@ impl FocasClient {
         }
     }
 
-    pub fn rdtofs(&self, number: i16, ofs_type: i16) -> anyhow::Result<ODBTOFS> {
+    pub fn rdtofs(&self, number: i16, ofs_type: i16) -> anyhow::Result<i64> {
         if self.is_busy() || !self.is_connected() {
             anyhow::bail!("CNC is currently busy with another operation");
         }
@@ -247,11 +268,7 @@ impl FocasClient {
                 "Dummy read: number={}, ofs_type={}, value={}, life={}, count={}",
                 number, ofs_type, value, state.life, state.count
             );
-            return Ok(ODBTOFS {
-                datano: number as c_short,
-                ofs_type: ofs_type as c_short,
-                data: value as c_long,
-            });
+            return Ok(value);
         }
         let current_handle = {
             let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
@@ -261,12 +278,43 @@ impl FocasClient {
             "Attempting to read TOFS: number={}, ofs_type={} from CNC at {}",
             number, ofs_type, self.ip
         );
-        let mut tofs = ODBTOFS {
-            datano: 0,
-            ofs_type: 0,
-            data: 0,
-        };
+
+        #[cfg(target_os = "windows")]
         unsafe {
+            let mut tofs = IODBTOFSZ {
+                datano: 0,
+                ofs_type: 0,
+                data: [0i64; 4],
+            };
+            let ret = cnc_rdtofsr(
+                current_handle,
+                number as c_short,
+                ofs_type as c_short,
+                std::mem::size_of::<IODBTOFSZ>() as c_short,
+                &mut tofs as *mut IODBTOFSZ,
+            );
+            if ret == 0 {
+                println!(
+                    "Successfully read TOFS: number={}, ofs_type={}, data={} from CNC at {}",
+                    number, ofs_type, tofs.data[0], self.ip
+                );
+                Ok(tofs.data[0])
+            } else {
+                eprintln!(
+                    "Failed to read TOFS: number={}, ofs_type={} from CNC at {}. Error code: {}",
+                    number, ofs_type, self.ip, ret
+                );
+                Err(anyhow::anyhow!("Failed to read TOFS: error code {}", ret))
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        unsafe {
+            let mut tofs = ODBTOFS {
+                datano: 0,
+                ofs_type: 0,
+                data: 0,
+            };
             let ret = cnc_rdtofs(
                 current_handle,
                 number as c_short,
@@ -279,7 +327,7 @@ impl FocasClient {
                     "Successfully read TOFS: number={}, ofs_type={}, data={} from CNC at {}",
                     number, ofs_type, tofs.data, self.ip
                 );
-                Ok(tofs)
+                Ok(tofs.data as i64)
             } else {
                 eprintln!(
                     "Failed to read TOFS: number={}, ofs_type={} from CNC at {}. Error code: {}",
@@ -407,12 +455,11 @@ impl Drop for FocasClient {
 
 #[cfg(test)]
 mod focas_tests {
-    use super::*; // extern "C" 선언이 있는 곳
+    use super::*;
     use std::ffi::CString;
 
     #[test]
     fn test_focas_library_linkage() {
-        // 1. 가짜 IP 주소 (연결이 안 되어야 정상)
         #[cfg(target_os = "linux")]
         {
             let log_file = CString::new("focas2.log").unwrap();
@@ -421,7 +468,7 @@ mod focas_tests {
         }
 
         let ip = CString::new("127.0.0.1").unwrap();
-        let mut handle: u16 = 0;
+        let mut handle: FwlibHndl = 0; // u16 → FwlibHndl(c_ulong) 수정
         let ret = unsafe { cnc_allclibhndl3(ip.as_ptr(), 8193, 3, &mut handle) };
 
         println!("FOCAS 함수 호출 결과 코드: {}", ret);
@@ -434,4 +481,3 @@ mod focas_tests {
             cnc_exitprocess();
         }
     }
-}
