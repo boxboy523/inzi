@@ -185,6 +185,10 @@ impl FocasClient {
 
             if ret.is_ok() {
                 self.set_busy(false);
+                println!(
+                    "Successfully wrote TOFS: number={}, ofs_type={}, data={} to CNC at {}",
+                    number, ofs_type, data, self.ip
+                );
                 return Ok(());
             }
 
@@ -255,6 +259,10 @@ impl FocasClient {
                 &mut tofs as *mut ODBTOFS,
             );
             if ret == 0 {
+                println!(
+                    "Successfully read TOFS: number={}, ofs_type={}, data={} from CNC at {}",
+                    number, ofs_type, tofs.data, self.ip
+                );
                 Ok(tofs)
             } else {
                 Err(anyhow::anyhow!("Failed to read TOFS: error code {}", ret))
