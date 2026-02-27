@@ -1,9 +1,9 @@
-use std::os::raw::{c_char, c_long, c_short, c_ushort};
+use std::os::raw::{c_char, c_long, c_short, c_ulong, c_ushort};
 
 use anyhow::anyhow;
 use std::sync::{Arc, Mutex, RwLock};
 
-pub type FwlibHndl = c_ushort;
+pub type FwlibHndl = c_ulong;
 
 #[repr(C)]
 pub struct ODBTOFS {
