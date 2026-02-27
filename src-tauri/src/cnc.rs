@@ -14,8 +14,8 @@ use crate::{fwlib::FocasClient, gauge::GaugeResponse, logger::HistoryLogger};
 pub struct GaugeBatches {
     batches: HashMap<u16, Vec<i32>>, // (machine_id, tool_num) -> batch of points
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>, // machine_id -> (ToolDataUpper , ToolDataLower)
-    handle_table: Arc<HashMap<u16, FocasClient>>,
-    batch_size: Arc<Mutex<HashMap<u16, usize>>>, // machine_id -> batch_size
+    handle_table: Arc<HashMap<u16, FocasClient>>, 
+    batch_size: Arc<Mutex<HashMap<u16, usize>>, // machine_id -> batch_size
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ impl GaugeBatches {
     pub fn new(
         batch_size: Arc<Mutex<HashMap<u16, usize>>>,
         tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
-        handle_table: Arc<HashMap<u16, FocasClient>>,
+        handle_table: Arc<HashMap<u16, FocasClient>>, 
     ) -> Self {
         Self {
             batches: HashMap::new(),
@@ -143,9 +143,9 @@ impl GaugeBatches {
 
 pub fn spawn_cnc_loop(
     receiver: Receiver<GaugeResponse>,
-    handle_table: Arc<HashMap<u16, FocasClient>>,
-    tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
-    batch_size: Arc<Mutex<HashMap<u16, usize>>>,
+    handle_table: Arc<HashMap<u16, FocasClient>>, 
+    tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>, 
+    batch_size: Arc<Mutex<HashMap<u16, usize>>>, 
     logger: Arc<HistoryLogger>,
 ) -> anyhow::Result<()> {
     let gauge_batches = GaugeBatches::new(batch_size, tool_data, Arc::clone(&handle_table));
@@ -201,10 +201,10 @@ pub fn spawn_cnc_loop(
 
 pub async fn update_offset_logs(
     logger: Arc<HistoryLogger>,
-    handle_table: Arc<HashMap<u16, FocasClient>>,
+    handle_table: Arc<HashMap<u16, FocasClient>>, 
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
 ) {
-    let mut last_offsets: HashMap<(u16, i16), i32> = HashMap::new();
+    let mut last_offsets: HashMap<(u16, i16), i64> = HashMap::new();
     loop {
         // Mutex 범위 최소화: 스냅샷만 뽑고 즉시 해제
         let snapshot: Vec<(u16, ToolData, ToolData)> = {
@@ -226,8 +226,7 @@ pub async fn update_offset_logs(
                     continue;
                 }
                 println!("Checking offsets for machine {}...", machine_id);
-                if let Ok(current_upper) = client.rdtofs(tool_upper.tool_num, 0) {
-                    let current_upper_value = current_upper.data as i32;
+                if let Ok(current_upper_value) = client.rdtofs(tool_upper.tool_num, 0) {
                     let last_upper_value = last_offsets
                         .get(&(machine_id, tool_upper.tool_num))
                         .cloned()
@@ -241,16 +240,15 @@ pub async fn update_offset_logs(
                             timestamp: chrono::Utc::now(),
                             machine_id,
                             tool_num: tool_upper.tool_num,
-                            old_value: last_upper_value,
-                            change_amount: current_upper_value - last_upper_value,
-                            new_value: current_upper_value,
+                            old_value: last_upper_value as i32,
+                            change_amount: (current_upper_value - last_upper_value) as i32,
+                            new_value: current_upper_value as i32,
                             success: true,
                         });
                     }
                     last_offsets.insert((machine_id, tool_upper.tool_num), current_upper_value);
                 }
-                if let Ok(current_lower) = client.rdtofs(tool_lower.tool_num, 0) {
-                    let current_lower_value = current_lower.data as i32;
+                if let Ok(current_lower_value) = client.rdtofs(tool_lower.tool_num, 0) {
                     let last_lower_value = last_offsets
                         .get(&(machine_id, tool_lower.tool_num))
                         .cloned()
@@ -264,9 +262,9 @@ pub async fn update_offset_logs(
                             timestamp: chrono::Utc::now(),
                             machine_id,
                             tool_num: tool_lower.tool_num,
-                            old_value: last_lower_value,
-                            change_amount: current_lower_value - last_lower_value,
-                            new_value: current_lower_value,
+                            old_value: last_lower_value as i32,
+                            change_amount: (current_lower_value - last_lower_value) as i32,
+                            new_value: current_lower_value as i32,
                             success: true,
                         });
                     }
@@ -279,7 +277,7 @@ pub async fn update_offset_logs(
 }
 
 async fn write_offset_to_cnc(
-    handle_table: Arc<HashMap<u16, FocasClient>>,
+    handle_table: Arc<HashMap<u16, FocasClient>>, 
     logger: Arc<HistoryLogger>,
     machine_id: u16,
     tool_num: i16,
@@ -288,8 +286,8 @@ async fn write_offset_to_cnc(
     if let Some(client) = handle_table.get(&machine_id) {
         let current_offset = client.rdtofs(tool_num, 0)?;
         let client_clone = client.clone();
-        let old_offset = current_offset.data as i32;
-        let new_offset = current_offset.data as i32 + offset_diff;
+        let old_offset = current_offset as i32;
+        let new_offset = old_offset + offset_diff;
         let result = client_clone.wrtofs(tool_num, 0, new_offset).await;
 
         logger.log(OffsetLog {
