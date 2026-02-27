@@ -209,8 +209,13 @@ pub async fn update_offset_logs(
             .for_each(|(&machine_id, (tool_upper, tool_lower))| {
                 if let Some(client) = handle_table.get(&machine_id) {
                     if !client.is_connected() || client.is_busy() {
+                        println!(
+                            "Skipping offset check for machine {}: not connected or busy",
+                            machine_id
+                        );
                         return;
                     }
+                    println!("Checking offsets for machine {}...", machine_id);
                     if let Ok(current_upper) = client.rdtofs(tool_upper.tool_num, 0) {
                         let current_upper_value = current_upper.data as i32;
                         let last_upper_value = last_offsets

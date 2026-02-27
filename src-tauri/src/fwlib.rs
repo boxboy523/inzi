@@ -167,6 +167,10 @@ impl FocasClient {
                 let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
                 *guard
             };
+            println!(
+                "Attempting to write TOFS: number={}, ofs_type={}, data={} to CNC at {}",
+                number, ofs_type, data, self.ip
+            );
             self.set_busy(true);
             let ret = unsafe {
                 let ret = cnc_wrtofs(
@@ -245,6 +249,10 @@ impl FocasClient {
             let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
             *guard
         };
+        println!(
+            "Attempting to read TOFS: number={}, ofs_type={} from CNC at {}",
+            number, ofs_type, self.ip
+        );
         let mut tofs = ODBTOFS {
             datano: 0,
             ofs_type: 0,
