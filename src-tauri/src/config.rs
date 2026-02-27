@@ -134,8 +134,8 @@ impl Default for AppConfig {
                 ip: "127.0.0.1".to_string(),
                 port: 5002,
                 read_req_hex: "500000FFFF03000C00100001040000701700A81900".to_string(),
-                write_req_hex_0: "500000FFFF03000E00200001140000D41700A801000100".to_string(),
-                write_req_hex_1: "500000FFFF03000E00200001140000D41700A801000000".to_string(),
+                write_req_hex_0: "500000FFFF03000E00200001140000D41700A801000000".to_string(),
+                write_req_hex_1: "500000FFFF03000E00200001140000D41700A801000100".to_string(),
             },
             machines: vec![
                 MachineConfig {
