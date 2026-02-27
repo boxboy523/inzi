@@ -281,7 +281,7 @@ impl FocasClient {
                 );
                 Ok(tofs)
             } else {
-                println!(
+                eprintln!(
                     "Failed to read TOFS: number={}, ofs_type={} from CNC at {}. Error code: {}",
                     number, ofs_type, self.ip, ret
                 );
@@ -318,6 +318,10 @@ impl FocasClient {
             if ret == 0 {
                 Ok(life.data as i16)
             } else {
+                eprintln!(
+                    "Failed to read life: number={} from CNC at {}. Error code: {}",
+                    number, self.ip, ret
+                );
                 Err(anyhow::anyhow!("Failed to read life: error code {}", ret))
             }
         }
@@ -351,6 +355,10 @@ impl FocasClient {
             if ret == 0 {
                 Ok(count.data as i16)
             } else {
+                eprintln!(
+                    "Failed to read count: number={} from CNC at {}. Error code: {}",
+                    number, self.ip, ret
+                );
                 Err(anyhow::anyhow!("Failed to read count: error code {}", ret))
             }
         }
