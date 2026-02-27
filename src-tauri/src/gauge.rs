@@ -17,7 +17,8 @@ use crate::HEX_CMDS;
 #[derive(Debug, Clone)]
 pub enum HexCommand {
     Read,
-    Write,
+    Write0, // D6100=0 (리셋 해제)
+    Write,  // D6100=1 (리셋 요청)
 }
 
 pub fn spawn_gauge_stream(
@@ -56,13 +57,26 @@ pub fn spawn_gauge_stream(
                     loop {
                         // Write 요청이 있으면 우선 처리
                         while let Ok(cmd) = write_rx.try_recv() {
-                            let hex_cmd = match cmd {
-                                HexCommand::Write => cmds.write_req_hex.as_slice(),
-                                _ => continue,
-                            };
-                            if let Err(e) = sink.send(hex_cmd).await {
-                                eprintln!("Write send error: {}. Stopping sink task.", e);
-                                return;
+                            match cmd {
+                                HexCommand::Write => {
+                                    // D6100=1 전송
+                                    if let Err(e) = sink.send(cmds.write_req_hex.as_slice()).await {
+                                        eprintln!("Write1 send error: {}. Stopping sink task.", e);
+                                        return;
+                                    }
+                                    // D6100=0 즉시 전송 (리셋 해제)
+                                    if let Err(e) = sink.send(cmds.write_req_hex_0.as_slice()).await {
+                                        eprintln!("Write0 send error: {}. Stopping sink task.", e);
+                                        return;
+                                    }
+                                }
+                                HexCommand::Write0 => {
+                                    if let Err(e) = sink.send(cmds.write_req_hex_0.as_slice()).await {
+                                        eprintln!("Write0 send error: {}. Stopping sink task.", e);
+                                        return;
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                         // Read 요청 송신
@@ -118,11 +132,10 @@ pub async fn gauge_get_response(
                     if let Err(e) = ch.send(response.clone()) {
                         eprintln!("Failed to send gauge response to channel: {}", e);
                     }
-                    // D6100=1: 측정 데이터 리셋 요청
+                    // D6100=1: 측정 데이터 리셋 요청 (폴링루프가 Write0을 자동으로 처리)
                     sink.send(HexCommand::Write).unwrap_or_else(|e| {
                         eprintln!("Failed to send write command: {}", e);
                     });
-                    // Write0 제거: PLC가 알아서 PlcDataOn을 내림
                 }
                 last_plc_on = response.plc_data_on;
                 (ch, sink, last_plc_on)
