@@ -147,7 +147,7 @@ impl FocasClient {
     }
 
     pub async fn wrtofs(&self, number: i16, ofs_type: i16, data: i32) -> anyhow::Result<()> {
-        if self.is_busy() {
+        if self.is_busy() || !self.is_connected() {
             anyhow::bail!("CNC is currently busy with another operation");
         }
         if let Some(dummy) = &self.dummy_state {
@@ -209,6 +209,10 @@ impl FocasClient {
             unsafe {
                 cnc_freelibhndl(current_handle);
             }
+            {
+                let mut guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
+                *guard = 0;
+            }
             loop {
                 let mut new_handle: FwlibHndl = 0;
                 let ip_cstr = std::ffi::CString::new(self.ip.as_str()).unwrap();
@@ -233,7 +237,7 @@ impl FocasClient {
     }
 
     pub fn rdtofs(&self, number: i16, ofs_type: i16) -> anyhow::Result<ODBTOFS> {
-        if self.is_busy() {
+        if self.is_busy() || !self.is_connected() {
             anyhow::bail!("CNC is currently busy with another operation");
         }
         if let Some(dummy) = &self.dummy_state {
@@ -283,7 +287,7 @@ impl FocasClient {
     }
 
     pub fn read_life(&self, number: i16) -> anyhow::Result<i16> {
-        if self.is_busy() {
+        if self.is_busy() || !self.is_connected() {
             anyhow::bail!("CNC is currently busy with another operation");
         }
         if let Some(dummy) = &self.dummy_state {
@@ -294,6 +298,7 @@ impl FocasClient {
             let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
             *guard
         };
+        self.set_busy(true);
         let mut life = ODBTLIFE3 {
             datano: 0,
             dummy: 0,
@@ -305,6 +310,7 @@ impl FocasClient {
                 number as c_short,
                 &mut life as *mut ODBTLIFE3,
             );
+            self.set_busy(false);
             if ret == 0 {
                 Ok(life.data as i16)
             } else {
@@ -314,7 +320,7 @@ impl FocasClient {
     }
 
     pub fn read_count(&self, number: i16) -> anyhow::Result<i16> {
-        if self.is_busy() {
+        if self.is_busy() || !self.is_connected() {
             anyhow::bail!("CNC is currently busy with another operation");
         }
         if let Some(dummy) = &self.dummy_state {
@@ -325,6 +331,7 @@ impl FocasClient {
             let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
             *guard
         };
+        self.set_busy(true);
         let mut count = ODBTLIFE3 {
             datano: 0,
             dummy: 0,
@@ -336,6 +343,7 @@ impl FocasClient {
                 number as c_short,
                 &mut count as *mut ODBTLIFE3,
             );
+            self.set_busy(false);
             if ret == 0 {
                 Ok(count.data as i16)
             } else {
