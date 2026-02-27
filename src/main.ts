@@ -370,8 +370,13 @@ document.getElementById('btn-history-close')!.addEventListener('click', () => {
     historyModal.classList.remove('flex');
 });
 
-document.getElementById('btn-edit-save')!.addEventListener('click', async () => {
-    if (!editContext) return;
+document.getElementById('btn-edit-save')!.addEventListener('click', async (e) => {
+    e.preventDefault();
+
+    if (!editContext) {
+        console.error("수정 컨텍스트가 없습니다.");
+        return;
+    }
     let rawVal = (document.getElementById('edit-input') as HTMLInputElement).value;
 
     if (rawVal === '' || rawVal === '-') rawVal = '0';

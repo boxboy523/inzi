@@ -60,6 +60,7 @@ pub fn spawn_gauge_stream(
                         HexCommand::Write0 => &cmds.write_req_hex_0,
                         HexCommand::Write1 => &cmds.write_req_hex_1,
                     };
+                    println!("Sending command to gauge: {:?}", cmd);
                     if let Err(e) = sink.send(hex_cmd).await {
                         eprintln!(
                             "Failed to send command to gauge: {}. Stopping sink task.",

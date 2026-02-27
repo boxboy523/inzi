@@ -173,37 +173,37 @@ async fn update_tool_settings(
     tool_num: Option<i16>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut tool_data_map = state.tool_data.lock().unwrap();
+    {
+        let mut tool_data_map = state.tool_data.lock().unwrap();
 
-    if let Some((upper, lower)) = tool_data_map.get_mut(&machine_id) {
-        let target_tool = if is_upper { upper } else { lower };
+        if let Some((upper, lower)) = tool_data_map.get_mut(&machine_id) {
+            let target_tool = if is_upper { upper } else { lower };
 
-        if let Some(v) = basic_size {
-            target_tool.basic_size = v;
+            if let Some(v) = basic_size {
+                target_tool.basic_size = v;
+            }
+            if let Some(v) = manual_offset {
+                target_tool.manual_offset = v;
+            }
+            if let Some(v) = offset_rate {
+                target_tool.offset_rate = v;
+            }
+            if let Some(v) = active {
+                target_tool.active = v;
+            }
+            if let Some(v) = tool_num {
+                target_tool.tool_num = v;
+            }
+        } else {
+            return Err("Machine ID not found".to_string());
         }
-        if let Some(v) = manual_offset {
-            target_tool.manual_offset = v;
-        }
-        if let Some(v) = offset_rate {
-            target_tool.offset_rate = v;
-        }
-        if let Some(v) = active {
-            target_tool.active = v;
-        }
-        if let Some(v) = tool_num {
-            target_tool.tool_num = v;
-        }
-
-        let mut config = AppConfig::load("config.json");
-        config.update_from_state(&state);
-        if let Err(e) = config.save("config.json") {
-            eprintln!("Config save failed: {}", e);
-        }
-
-        Ok(())
-    } else {
-        Err("Machine ID not found".to_string())
+    };
+    let mut config = AppConfig::load("config.json");
+    config.update_from_state(&state);
+    if let Err(e) = config.save("config.json") {
+        eprintln!("Config save failed: {}", e);
     }
+    Ok(())
 }
 
 #[tauri::command]
@@ -212,11 +212,13 @@ async fn update_batch_size(
     new_size: usize,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut batch_map = state.batch_size.lock().unwrap();
-    if new_size > 30 {
-        return Err("Max batch size is 30".to_string());
+    {
+        let mut batch_map = state.batch_size.lock().unwrap();
+        if new_size > 30 {
+            return Err("Max batch size is 30".to_string());
+        }
+        batch_map.insert(machine_id, new_size);
     }
-    batch_map.insert(machine_id, new_size);
     let mut config = AppConfig::load("config.json");
     config.update_from_state(&state);
     if let Err(e) = config.save("config.json") {
