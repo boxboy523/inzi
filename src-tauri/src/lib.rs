@@ -120,19 +120,10 @@ async fn get_all_machine_states(state: State<'_, AppState>) -> Result<Vec<Machin
                 .get(&id)
                 .ok_or_else(|| format!("No CNC client found for machine {}", id))?;
 
-            let upper_life = client
-                .read_life(upper.tool_num)
-                .map_err(|e| format!("Failed to read upper tool life for machine {}: {}", id, e))?;
-            let lower_life = client
-                .read_life(lower.tool_num)
-                .map_err(|e| format!("Failed to read lower tool life for machine {}: {}", id, e))?;
-
-            let upper_count = client.read_count(upper.tool_num).map_err(|e| {
-                format!("Failed to read upper tool count for machine {}: {}", id, e)
-            })?;
-            let lower_count = client.read_count(lower.tool_num).map_err(|e| {
-                format!("Failed to read lower tool count for machine {}: {}", id, e)
-            })?;
+            let upper_life = client.read_life(upper.tool_num).unwrap_or(-1);
+            let lower_life = client.read_life(lower.tool_num).unwrap_or(-1);
+            let upper_count = client.read_count(upper.tool_num).unwrap_or(-1);
+            let lower_count = client.read_count(lower.tool_num).unwrap_or(-1);
 
             let upper_ui = ToolUiState {
                 data: upper.clone(),
