@@ -17,8 +17,7 @@ use crate::HEX_CMDS;
 #[derive(Debug, Clone)]
 pub enum HexCommand {
     Read,
-    Write0,
-    Write1,
+    Write,
 }
 
 pub fn spawn_gauge_stream(
@@ -58,8 +57,7 @@ pub fn spawn_gauge_stream(
                         // Write 요청이 있으면 우선 처리
                         while let Ok(cmd) = write_rx.try_recv() {
                             let hex_cmd = match cmd {
-                                HexCommand::Write0 => cmds.write_req_hex_0.as_slice(),
-                                HexCommand::Write1 => cmds.write_req_hex_1.as_slice(),
+                                HexCommand::Write => cmds.write_req_hex.as_slice(),
                                 _ => continue,
                             };
                             if let Err(e) = sink.send(hex_cmd).await {
@@ -114,19 +112,17 @@ pub async fn gauge_get_response(
             |(ch, sink, mut last_plc_on), response| async move {
                 if response.plc_data_on && !last_plc_on {
                     println!(
-                        "Received new gauge data for machine {}: point = {}, raw = {}",
-                        response.machine_id, response.point, response.raw_data
+                        "Measurement complete for line {}: raw = {}",
+                        response.active_line, response.raw_data
                     );
                     if let Err(e) = ch.send(response.clone()) {
                         eprintln!("Failed to send gauge response to channel: {}", e);
                     }
-                    sink.send(HexCommand::Write1).unwrap_or_else(|e| {
+                    // D6100=1: 측정 데이터 리셋 요청
+                    sink.send(HexCommand::Write).unwrap_or_else(|e| {
                         eprintln!("Failed to send write command: {}", e);
                     });
-                } else if !response.plc_data_on && last_plc_on {
-                    sink.send(HexCommand::Write0).unwrap_or_else(|e| {
-                        eprintln!("Failed to send write command: {}", e);
-                    });
+                    // Write0 제거: PLC가 알아서 PlcDataOn을 내림
                 }
                 last_plc_on = response.plc_data_on;
                 (ch, sink, last_plc_on)
@@ -136,12 +132,22 @@ pub async fn gauge_get_response(
 }
 
 #[derive(Debug, Clone)]
-pub struct GaugeResponse {
-    pub machine_id: u16,
-    pub raw_data: String,
-    plc_data_on: bool,
-    pub point: i32,
+pub struct LineMeasurement {
+    pub line_id: u16,
+    pub value1: i32,
+    pub value2: i32,
 }
+
+#[derive(Debug, Clone)]
+pub struct GaugeResponse {
+    pub active_line: u16,
+    pub raw_data: String,
+    pub plc_data_on: bool,
+    pub lines: [LineMeasurement; 3],
+}
+
+const PLC_MEASUREMENT_COMPLETE: u16 = 2;
+const PLC_RESPONSE_MIN_LEN: usize = 55; // 9 header + 2 end_code + 44 data (D6000~D6021)
 
 impl GaugeResponse {
     fn from_bytes(bytes: Vec<u8>) -> Option<Self> {
@@ -155,25 +161,48 @@ impl GaugeResponse {
             return None;
         }
 
-        if bytes.len() < 40 {
+        // D6021까지 필요: bytes[11 + 21*2 + 1] = bytes[54]
+        if bytes.len() < PLC_RESPONSE_MIN_LEN {
             return None;
         }
-        let machine_id = u16::from_le_bytes([bytes[11], bytes[12]]);
-        let plc_data_on = u16::from_le_bytes([bytes[13], bytes[14]]);
-        let point = (0..2)
-            .map(|i| {
-                let offset = 31 + i * 4;
-                let integer = i16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
-                let fractional = i16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
-                integer as i32 * 10000 + fractional as i32
-            })
-            .sum::<i32>()
-            / 2;
+
+        let active_line = u16::from_le_bytes([bytes[11], bytes[12]]); // D6000
+        let plc_data_on_raw = u16::from_le_bytes([bytes[13], bytes[14]]); // D6001
+
+        // D6010 = bytes[11 + 10*2] = bytes[31]
+        // 2워드(4바이트)당 1측정값: 정수부(2바이트) + 소수부(2바이트)
+        let parse_value = |base: usize| -> i32 {
+            let integer = i16::from_le_bytes([bytes[base], bytes[base + 1]]);
+            let fractional = i16::from_le_bytes([bytes[base + 2], bytes[base + 3]]);
+            integer as i32 * 10000 + fractional as i32
+        };
+
+        // 라인1: D6010-11(bytes31-34), D6012-13(bytes35-38)
+        // 라인2: D6014-15(bytes39-42), D6016-17(bytes43-46)
+        // 라인3: D6018-19(bytes47-50), D6020-21(bytes51-54)
+        let lines = [
+            LineMeasurement {
+                line_id: 1,
+                value1: parse_value(31),
+                value2: parse_value(35),
+            },
+            LineMeasurement {
+                line_id: 2,
+                value1: parse_value(39),
+                value2: parse_value(43),
+            },
+            LineMeasurement {
+                line_id: 3,
+                value1: parse_value(47),
+                value2: parse_value(51),
+            },
+        ];
+
         Some(Self {
-            machine_id,
+            active_line,
             raw_data: hex::encode(&bytes),
-            plc_data_on: plc_data_on == 2,
-            point,
+            plc_data_on: plc_data_on_raw == PLC_MEASUREMENT_COMPLETE,
+            lines,
         })
     }
 }
@@ -218,27 +247,27 @@ pub async fn spawn_dummy_gauge_server(port: u16) {
             if let Ok((mut socket, _)) = listener.accept().await {
                 tokio::spawn(async move {
                     let mut machine_id = 1u16;
-                    let mut toggle_on = 0u16; // ▼ 추가: 0과 1을 번갈아가며 보낼 변수
+                    let mut toggle_on = 0u16;
 
                     loop {
                         use tokio::io::AsyncWriteExt;
-                        let mut resp = vec![0u8; 61];
+                        // 55 bytes: 9 header + 2 end_code + 44 data (22 words)
+                        let mut resp = vec![0u8; PLC_RESPONSE_MIN_LEN];
 
-                        // (1~3번 헤더 부분은 동일)
                         resp[0..7].copy_from_slice(&[0xD0, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00]);
-                        resp[7..9].copy_from_slice(&[0x34, 0x00]);
+                        // length = 2 (end_code) + 44 (22 words) = 46 = 0x2E
+                        resp[7..9].copy_from_slice(&[0x2E, 0x00]);
                         resp[9..11].copy_from_slice(&[0x00, 0x00]);
 
-                        // ▼ 매 주기마다 신호를 0 -> 1 -> 0 으로 토글
                         toggle_on = if toggle_on == 0 { 2 } else { 0 };
 
-                        // D6000: Machine ID
+                        // D6000: active_line (machine_id 1~3)
                         resp[11..13].copy_from_slice(&machine_id.to_le_bytes());
 
-                        // D6001: PlcDataOn (이제 무조건 1이 아니라 toggle_on 값이 들어감)
+                        // D6001: PlcDataOn (toggle: 2=측정완료, 0=알수없음)
                         resp[13..15].copy_from_slice(&toggle_on.to_le_bytes());
 
-                        // 가짜 데이터 생성 부분 (동일)
+                        // 가짜 측정 데이터
                         let ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
@@ -246,26 +275,35 @@ pub async fn spawn_dummy_gauge_server(port: u16) {
                         let frac = (ms % 100) as i16 - 50;
                         let int_val = 48i16;
 
+                        // 라인1: D6010-D6013 (bytes[31..39])
                         resp[31..33].copy_from_slice(&int_val.to_le_bytes());
                         resp[33..35].copy_from_slice(&frac.to_le_bytes());
                         resp[35..37].copy_from_slice(&int_val.to_le_bytes());
                         resp[37..39].copy_from_slice(&frac.to_le_bytes());
+                        // 라인2: D6014-D6017 (bytes[39..47])
+                        resp[39..41].copy_from_slice(&int_val.to_le_bytes());
+                        resp[41..43].copy_from_slice(&frac.to_le_bytes());
+                        resp[43..45].copy_from_slice(&int_val.to_le_bytes());
+                        resp[45..47].copy_from_slice(&frac.to_le_bytes());
+                        // 라인3: D6018-D6021 (bytes[47..55])
+                        resp[47..49].copy_from_slice(&int_val.to_le_bytes());
+                        resp[49..51].copy_from_slice(&frac.to_le_bytes());
+                        resp[51..53].copy_from_slice(&int_val.to_le_bytes());
+                        resp[53..55].copy_from_slice(&frac.to_le_bytes());
 
                         if socket.write_all(&resp).await.is_err() {
                             break;
                         }
 
                         println!(
-                            "[Dummy] Sent Binary (PlcDataOn: {}) for machine {}",
+                            "[Dummy] Sent Binary (PlcDataOn: {}) for line {}",
                             toggle_on, machine_id
                         );
 
-                        // ▼ 신호가 0으로 떨어질 때 기계 번호를 바꿔줍니다.
                         if toggle_on == 0 {
-                            machine_id = if machine_id == 1 { 2 } else { 1 };
+                            machine_id = if machine_id >= 3 { 1 } else { machine_id + 1 };
                         }
 
-                        // PC가 0.2초마다 폴링하므로, 더미 서버는 0.5초나 1초마다 상태를 바꿉니다.
                         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
                     }
                     dbg!()
@@ -290,11 +328,18 @@ mod tests {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = [0; 1024];
             let _ = socket.read(&mut buf).await.unwrap();
-            let mut mock_response = vec![0u8; 51];
-            mock_response[7] = 42;
+            // 55 bytes: 9 header + 2 end_code + 44 data (22 words D6000~D6021)
+            let mut mock_response = vec![0u8; PLC_RESPONSE_MIN_LEN];
+            // length field = 55 - 9 = 46 = 0x2E
+            mock_response[7] = 0x2E;
             mock_response[8] = 0;
+            // active_line = 1
             mock_response[11] = 1;
             mock_response[12] = 0;
+            // plc_data_on = 2 (측정완료)
+            mock_response[13] = 2;
+            mock_response[14] = 0;
+            // line1 value1 integer part
             mock_response[31] = 10;
             mock_response[32] = 0;
             socket.write_all(&mock_response).await.unwrap();

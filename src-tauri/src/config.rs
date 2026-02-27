@@ -26,8 +26,7 @@ pub struct GaugeConfig {
     pub ip: String,
     pub port: u16,
     pub read_req_hex: String,
-    pub write_req_hex_0: String,
-    pub write_req_hex_1: String,
+    pub write_req_hex: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -133,9 +132,8 @@ impl Default for AppConfig {
             gauge: GaugeConfig {
                 ip: "127.0.0.1".to_string(),
                 port: 5002,
-                read_req_hex: "500000FFFF03000C00100001040000701700A81900".to_string(),
-                write_req_hex_0: "500000FFFF03000E00200001140000D41700A801000000".to_string(),
-                write_req_hex_1: "500000FFFF03000E00200001140000D41700A801000100".to_string(),
+                read_req_hex: "500000FFFF03000C00100001040000701700A81600".to_string(),
+                write_req_hex: "500000FFFF03000E00200001140000D41700A801000100".to_string(),
             },
             machines: vec![
                 MachineConfig {

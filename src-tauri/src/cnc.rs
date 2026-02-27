@@ -61,10 +61,14 @@ impl GaugeBatches {
     }
 
     pub fn insert(&mut self, gauge_response: &GaugeResponse) {
-        self.batches
-            .entry(gauge_response.machine_id)
-            .or_insert_with(Vec::new)
-            .push(gauge_response.point);
+        let active = gauge_response.active_line;
+        if let Some(line) = gauge_response.lines.iter().find(|l| l.line_id == active) {
+            // PLC 라인번호(1,2,3) → machine_id(0,1,2) 변환
+            let machine_id = active.saturating_sub(1);
+            let batch = self.batches.entry(machine_id).or_insert_with(Vec::new);
+            batch.push(line.value1);
+            batch.push(line.value2);
+        }
     }
 
     pub fn extract_all(&mut self) -> anyhow::Result<Vec<(u16, i16, i32)>> {
