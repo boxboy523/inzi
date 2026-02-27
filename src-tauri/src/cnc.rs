@@ -202,74 +202,74 @@ pub async fn update_offset_logs(
 ) {
     let mut last_offsets: HashMap<(u16, i16), i32> = HashMap::new();
     loop {
-        tool_data
-            .lock()
-            .unwrap()
-            .iter()
-            .for_each(|(&machine_id, (tool_upper, tool_lower))| {
-                if let Some(client) = handle_table.get(&machine_id) {
-                    if !client.is_connected() || client.is_busy() {
-                        println!(
-                            "Skipping offset check for machine {}: not connected or busy",
-                            machine_id
-                        );
-                        return;
-                    }
-                    println!("Checking offsets for machine {}...", machine_id);
-                    if let Ok(current_upper) = client.rdtofs(tool_upper.tool_num, 0) {
-                        let current_upper_value = current_upper.data as i32;
-                        let last_upper_value = last_offsets
-                            .get(&(machine_id, tool_upper.tool_num))
-                            .cloned()
-                            .unwrap_or(current_upper_value);
-                        if current_upper_value != last_upper_value {
-                            println!(
-                                "Offset change detected for machine {}, tool {}: {} -> {}",
-                                machine_id,
-                                tool_upper.tool_num,
-                                last_upper_value,
-                                current_upper_value
-                            );
-                            logger.log(OffsetLog {
-                                timestamp: chrono::Utc::now(),
-                                machine_id,
-                                tool_num: tool_upper.tool_num,
-                                old_value: last_upper_value,
-                                change_amount: current_upper_value - last_upper_value,
-                                new_value: current_upper_value,
-                                success: true,
-                            });
-                        }
-                        last_offsets.insert((machine_id, tool_upper.tool_num), current_upper_value);
-                    }
-                    if let Ok(current_lower) = client.rdtofs(tool_lower.tool_num, 0) {
-                        let current_lower_value = current_lower.data as i32;
-                        let last_lower_value = last_offsets
-                            .get(&(machine_id, tool_lower.tool_num))
-                            .cloned()
-                            .unwrap_or(current_lower_value);
-                        if current_lower_value != last_lower_value {
-                            println!(
-                                "Offset change detected for machine {}, tool {}: {} -> {}",
-                                machine_id,
-                                tool_lower.tool_num,
-                                last_lower_value,
-                                current_lower_value
-                            );
-                            logger.log(OffsetLog {
-                                timestamp: chrono::Utc::now(),
-                                machine_id,
-                                tool_num: tool_lower.tool_num,
-                                old_value: last_lower_value,
-                                change_amount: current_lower_value - last_lower_value,
-                                new_value: current_lower_value,
-                                success: true,
-                            });
-                        }
-                        last_offsets.insert((machine_id, tool_lower.tool_num), current_lower_value);
-                    }
+        // Mutex 범위 최소화: 스냅샷만 뽑고 즉시 해제
+        let snapshot: Vec<(u16, ToolData, ToolData)> = {
+            tool_data
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(&id, (u, l))| (id, u.clone(), l.clone()))
+                .collect()
+        };
+
+        for (machine_id, tool_upper, tool_lower) in snapshot {
+            if let Some(client) = handle_table.get(&machine_id) {
+                if !client.is_connected() || client.is_busy() {
+                    println!(
+                        "Skipping offset check for machine {}: not connected or busy",
+                        machine_id
+                    );
+                    continue;
                 }
-            });
+                println!("Checking offsets for machine {}...", machine_id);
+                if let Ok(current_upper) = client.rdtofs(tool_upper.tool_num, 0) {
+                    let current_upper_value = current_upper.data as i32;
+                    let last_upper_value = last_offsets
+                        .get(&(machine_id, tool_upper.tool_num))
+                        .cloned()
+                        .unwrap_or(current_upper_value);
+                    if current_upper_value != last_upper_value {
+                        println!(
+                            "Offset change detected for machine {}, tool {}: {} -> {}",
+                            machine_id, tool_upper.tool_num, last_upper_value, current_upper_value
+                        );
+                        logger.log(OffsetLog {
+                            timestamp: chrono::Utc::now(),
+                            machine_id,
+                            tool_num: tool_upper.tool_num,
+                            old_value: last_upper_value,
+                            change_amount: current_upper_value - last_upper_value,
+                            new_value: current_upper_value,
+                            success: true,
+                        });
+                    }
+                    last_offsets.insert((machine_id, tool_upper.tool_num), current_upper_value);
+                }
+                if let Ok(current_lower) = client.rdtofs(tool_lower.tool_num, 0) {
+                    let current_lower_value = current_lower.data as i32;
+                    let last_lower_value = last_offsets
+                        .get(&(machine_id, tool_lower.tool_num))
+                        .cloned()
+                        .unwrap_or(current_lower_value);
+                    if current_lower_value != last_lower_value {
+                        println!(
+                            "Offset change detected for machine {}, tool {}: {} -> {}",
+                            machine_id, tool_lower.tool_num, last_lower_value, current_lower_value
+                        );
+                        logger.log(OffsetLog {
+                            timestamp: chrono::Utc::now(),
+                            machine_id,
+                            tool_num: tool_lower.tool_num,
+                            old_value: last_lower_value,
+                            change_amount: current_lower_value - last_lower_value,
+                            new_value: current_lower_value,
+                            success: true,
+                        });
+                    }
+                    last_offsets.insert((machine_id, tool_lower.tool_num), current_lower_value);
+                }
+            }
+        }
         tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
     }
 }

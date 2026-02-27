@@ -164,7 +164,10 @@ impl FocasClient {
         }
         loop {
             let current_handle = {
-                let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
+                let guard = self.handle.lock().map_err(|_| {
+                    self.set_busy(false);
+                    anyhow!("Mutex poisoned")
+                })?;
                 *guard
             };
             println!(
@@ -196,6 +199,7 @@ impl FocasClient {
                 return Ok(());
             }
 
+            self.set_busy(false);
             eprintln!(
                 "Write failed for CNC at {}:{}. Error: {}.\n Attempting to reconnect...",
                 self.ip,

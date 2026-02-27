@@ -49,34 +49,28 @@ pub fn spawn_gauge_stream(
 
             let (mut sink, stream) = Framed::new(tcp_stream, McProtocolCodec).split();
             let channel_clone = channel.clone();
-            let (sink_tx1, mut sink_rx) = mpsc::unbounded_channel::<HexCommand>();
-            let sink_tx2 = sink_tx1.clone();
-
-            tokio::spawn(async move {
-                while let Some(cmd) = sink_rx.recv().await {
-                    let cmds = HEX_CMDS.get().unwrap();
-                    let hex_cmd = match cmd {
-                        HexCommand::Read => &cmds.read_req_hex,
-                        HexCommand::Write0 => &cmds.write_req_hex_0,
-                        HexCommand::Write1 => &cmds.write_req_hex_1,
-                    };
-                    println!("Sending command to gauge: {:?}", cmd);
-                    if let Err(e) = sink.send(hex_cmd).await {
-                        eprintln!(
-                            "Failed to send command to gauge: {}. Stopping sink task.",
-                            e
-                        );
-                        break;
-                    }
-                }
-            });
+            let (write_tx, mut write_rx) = mpsc::unbounded_channel::<HexCommand>();
 
             tokio::select! {
                 _ = async move {
+                    let cmds = HEX_CMDS.get().unwrap();
                     loop {
-                        if let Err(e) = sink_tx1.send(HexCommand::Read) {
-                            eprintln!("Sink send error: {}. Stopping sink task.", e);
-                            break;
+                        // Write 요청이 있으면 우선 처리
+                        while let Ok(cmd) = write_rx.try_recv() {
+                            let hex_cmd = match cmd {
+                                HexCommand::Write0 => cmds.write_req_hex_0.as_slice(),
+                                HexCommand::Write1 => cmds.write_req_hex_1.as_slice(),
+                                _ => continue,
+                            };
+                            if let Err(e) = sink.send(hex_cmd).await {
+                                eprintln!("Write send error: {}. Stopping sink task.", e);
+                                return;
+                            }
+                        }
+                        // Read 요청 송신
+                        if let Err(e) = sink.send(cmds.read_req_hex.as_slice()).await {
+                            eprintln!("Read send error: {}. Stopping sink task.", e);
+                            return;
                         }
                         tokio::time::sleep(Duration::from_millis(200)).await;
                     }
@@ -84,10 +78,10 @@ pub fn spawn_gauge_stream(
                     eprintln!("Sink task ended for {}", addr);
                 }
                 _ = async move {
-                        gauge_get_response(channel_clone, stream, sink_tx2).await;
-                    } => {
-                        eprintln!("Stream task ended for {}", addr);
-                    }
+                    gauge_get_response(channel_clone, stream, write_tx).await;
+                } => {
+                    eprintln!("Stream task ended for {}", addr);
+                }
             }
 
             println!(
@@ -284,6 +278,7 @@ pub async fn spawn_dummy_gauge_server(port: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     #[tokio::test]
@@ -305,8 +300,8 @@ mod tests {
             socket.write_all(&mock_response).await.unwrap();
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         });
-        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
-        let handle_result = spawn_gauge_stream("127.0.0.1", port, "500000", tx);
+        let (tx, _) = tokio::sync::broadcast::channel(100);
+        let handle_result = spawn_gauge_stream("127.0.0.1", port, tx);
         assert!(handle_result.is_ok(), "TCP 연결 또는 스트림 생성 실패");
     }
 }
