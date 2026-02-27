@@ -15,7 +15,7 @@ pub struct GaugeBatches {
     batches: HashMap<u16, Vec<i32>>, // (machine_id, tool_num) -> batch of points
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>, // machine_id -> (ToolDataUpper , ToolDataLower)
     handle_table: Arc<HashMap<u16, FocasClient>>, 
-    batch_size: Arc<Mutex<HashMap<u16, usize>>, // machine_id -> batch_size
+    batch_size: Arc<Mutex<HashMap<u16, usize>>>, // machine_id -> batch_size
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,8 +144,8 @@ impl GaugeBatches {
 pub fn spawn_cnc_loop(
     receiver: Receiver<GaugeResponse>,
     handle_table: Arc<HashMap<u16, FocasClient>>, 
-    tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>, 
-    batch_size: Arc<Mutex<HashMap<u16, usize>>>, 
+    tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
+    batch_size: Arc<Mutex<HashMap<u16, usize>>>,
     logger: Arc<HistoryLogger>,
 ) -> anyhow::Result<()> {
     let gauge_batches = GaugeBatches::new(batch_size, tool_data, Arc::clone(&handle_table));
