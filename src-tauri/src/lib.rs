@@ -20,8 +20,7 @@ pub mod logger;
 #[derive(Debug, Clone)]
 pub struct HexCommands {
     pub read_req_hex: Vec<u8>,
-    pub write_req_hex_0: Vec<u8>,
-    pub write_req_hex_1: Vec<u8>,
+    pub write_req_hex: Vec<u8>,
 }
 
 static HEX_CMDS: OnceLock<HexCommands> = OnceLock::new();
@@ -266,10 +265,8 @@ pub fn run() {
             let hex_cmds = HexCommands {
                 read_req_hex: hex::decode(&config.gauge.read_req_hex)
                     .expect("Invalid read_req_hex in config"),
-                write_req_hex_0: hex::decode(&config.gauge.write_req_hex_0)
-                    .expect("Invalid write_req_hex_0 in config"),
-                write_req_hex_1: hex::decode(&config.gauge.write_req_hex_1)
-                    .expect("Invalid write_req_hex_1 in config"),
+                write_req_hex: hex::decode(&config.gauge.write_req_hex)
+                    .expect("Invalid write_req_hex in config"),
             };
             HEX_CMDS.set(hex_cmds).unwrap_or_else(|_| {
                 panic!("Failed to set HEX_CMDS from config. This should never happen since it's only set once.")
