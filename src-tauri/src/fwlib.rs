@@ -281,6 +281,10 @@ impl FocasClient {
                 );
                 Ok(tofs)
             } else {
+                println!(
+                    "Failed to read TOFS: number={}, ofs_type={} from CNC at {}. Error code: {}",
+                    number, ofs_type, self.ip, ret
+                );
                 Err(anyhow::anyhow!("Failed to read TOFS: error code {}", ret))
             }
         }
