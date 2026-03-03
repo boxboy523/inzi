@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
 
 use anyhow::anyhow;
+use focas_rs::FocasShell;
 use futures::future::join_all;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -9,12 +10,12 @@ use tokio::sync::broadcast::Receiver;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::OffsetLog;
-use crate::{fwlib::FocasClient, gauge::GaugeResponse, logger::HistoryLogger};
+use crate::{gauge::GaugeResponse, logger::HistoryLogger};
 
 pub struct GaugeBatches {
     batches: HashMap<u16, Vec<i32>>, // (machine_id, tool_num) -> batch of points
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>, // machine_id -> (ToolDataUpper , ToolDataLower)
-    handle_table: Arc<HashMap<u16, FocasClient>>,
+    handle_table: Arc<HashMap<u16, FocasShell>>,
     batch_size: Arc<Mutex<HashMap<u16, usize>>>, // machine_id -> batch_size
 }
 
@@ -50,7 +51,7 @@ impl GaugeBatches {
     pub fn new(
         batch_size: Arc<Mutex<HashMap<u16, usize>>>,
         tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
-        handle_table: Arc<HashMap<u16, FocasClient>>,
+        handle_table: Arc<HashMap<u16, FocasShell>>,
     ) -> Self {
         Self {
             batches: HashMap::new(),
@@ -90,7 +91,7 @@ impl GaugeBatches {
         key: u16,
     ) -> anyhow::Result<(Option<(u16, i16, i32)>, Option<(u16, i16, i32)>)> {
         if let Some(handle) = self.handle_table.get(&key) {
-            if !handle.is_connected() || handle.is_busy() {
+            if !handle.is_running() {
                 return Ok((None, None));
             }
         } else {
@@ -143,7 +144,7 @@ impl GaugeBatches {
 
 pub fn spawn_cnc_loop(
     receiver: Receiver<GaugeResponse>,
-    handle_table: Arc<HashMap<u16, FocasClient>>,
+    handle_table: Arc<HashMap<u16, FocasShell>>,
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
     batch_size: Arc<Mutex<HashMap<u16, usize>>>,
     logger: Arc<HistoryLogger>,
@@ -201,7 +202,7 @@ pub fn spawn_cnc_loop(
 
 pub async fn update_offset_logs(
     logger: Arc<HistoryLogger>,
-    handle_table: Arc<HashMap<u16, FocasClient>>,
+    handle_table: Arc<HashMap<u16, FocasShell>>,
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
 ) {
     let mut last_offsets: HashMap<(u16, i16), i32> = HashMap::new();
@@ -218,15 +219,15 @@ pub async fn update_offset_logs(
 
         for (machine_id, tool_upper, tool_lower) in snapshot {
             if let Some(client) = handle_table.get(&machine_id) {
-                if !client.is_connected() || client.is_busy() {
+                if !client.is_running() {
                     println!(
-                        "Skipping offset check for machine {}: not connected or busy",
+                        "Skipping offset check for machine {}: not connected",
                         machine_id
                     );
                     continue;
                 }
                 println!("Checking offsets for machine {}...", machine_id);
-                if let Ok(current_upper) = client.rdtofs(tool_upper.tool_num, 0) {
+                if let Ok(current_upper) = client.rdtofs(tool_upper.tool_num, 0).await {
                     let current_upper_value = current_upper.data as i32;
                     let last_upper_value = last_offsets
                         .get(&(machine_id, tool_upper.tool_num))
@@ -249,7 +250,7 @@ pub async fn update_offset_logs(
                     }
                     last_offsets.insert((machine_id, tool_upper.tool_num), current_upper_value);
                 }
-                if let Ok(current_lower) = client.rdtofs(tool_lower.tool_num, 0) {
+                if let Ok(current_lower) = client.rdtofs(tool_lower.tool_num, 0).await {
                     let current_lower_value = current_lower.data as i32;
                     let last_lower_value = last_offsets
                         .get(&(machine_id, tool_lower.tool_num))
@@ -279,18 +280,17 @@ pub async fn update_offset_logs(
 }
 
 async fn write_offset_to_cnc(
-    handle_table: Arc<HashMap<u16, FocasClient>>,
+    handle_table: Arc<HashMap<u16, FocasShell>>,
     logger: Arc<HistoryLogger>,
     machine_id: u16,
     tool_num: i16,
     offset_diff: i32,
 ) -> anyhow::Result<()> {
     if let Some(client) = handle_table.get(&machine_id) {
-        let current_offset = client.rdtofs(tool_num, 0)?;
-        let client_clone = client.clone();
+        let current_offset = client.rdtofs(tool_num, 0).await?;
         let old_offset = current_offset.data as i32;
         let new_offset = current_offset.data as i32 + offset_diff;
-        let result = client_clone.wrtofs(tool_num, 0, new_offset).await;
+        let result = client.wrtofs(tool_num, 0, new_offset).await;
 
         logger.log(OffsetLog {
             timestamp: chrono::Utc::now(),

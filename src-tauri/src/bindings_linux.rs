@@ -30195,7 +30195,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn cnc_wrlife(arg1: ::std::os::raw::c_ushort, arg2: *mut IDBITD)
-        -> ::std::os::raw::c_short;
+    -> ::std::os::raw::c_short;
 }
 unsafe extern "C" {
     pub fn cnc_wrcount(
@@ -33927,7 +33927,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn cnc_rdipltp(arg1: ::std::os::raw::c_ushort, buf: *mut ODBIPL)
-        -> ::std::os::raw::c_short;
+    -> ::std::os::raw::c_short;
 }
 unsafe extern "C" {
     pub fn cnc_rdsyssoft3(

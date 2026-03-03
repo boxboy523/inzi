@@ -24,10 +24,11 @@ jobs:
         with:
           version: 9
 
-      - name: Install Rust
+      - name: Install Rust 32-bit target
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          toolchain: stable
+          targets: i686-pc-windows-msvc
 
       - name: Check libs folder
         run: |
@@ -59,3 +60,4 @@ jobs:
           releaseDraft: true
           prerelease: false
           allowUpdates: true
+          args: --target i686-pc-windows-msvc   

@@ -2,18 +2,16 @@ use std::sync::{Arc, OnceLock};
 use std::{collections::HashMap, sync::Mutex};
 
 use chrono::{DateTime, Utc};
+use focas_rs::FocasShell;
 use serde::Serialize;
 use tauri::{Manager, State};
 
 use crate::cnc::{update_offset_logs, ToolData};
 use crate::logger::HistoryLogger;
-use crate::{
-    cnc::spawn_cnc_loop, config::AppConfig, fwlib::FocasClient, gauge::spawn_gauge_stream,
-};
+use crate::{cnc::spawn_cnc_loop, config::AppConfig, gauge::spawn_gauge_stream};
 
 pub mod cnc;
 pub mod config;
-pub mod fwlib;
 pub mod gauge;
 pub mod logger;
 
@@ -27,7 +25,7 @@ pub struct HexCommands {
 static HEX_CMDS: OnceLock<HexCommands> = OnceLock::new();
 
 pub struct AppState {
-    pub handle_table: Arc<HashMap<u16, FocasClient>>,
+    pub handle_table: Arc<HashMap<u16, FocasShell>>,
     pub tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
     pub batch_size: Arc<Mutex<HashMap<u16, usize>>>,
     pub password: String,
@@ -52,8 +50,8 @@ pub struct ToolUiState {
     pub data: ToolData,
     pub current_offset: f64,
     pub previous_offset: f64,
-    pub life: i16,
-    pub count: i16,
+    pub life: i32,
+    pub count: i32,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -120,15 +118,32 @@ async fn get_all_machine_states(state: State<'_, AppState>) -> Result<Vec<Machin
                 .get(&id)
                 .ok_or_else(|| format!("No CNC client found for machine {}", id))?;
 
-            let upper_life = client.read_life(upper.tool_num).unwrap_or(-1);
-            let lower_life = client.read_life(lower.tool_num).unwrap_or(-1);
-            let upper_count = client.read_count(upper.tool_num).unwrap_or(-1);
-            let lower_count = client.read_count(lower.tool_num).unwrap_or(-1);
+            let upper_life = if let Ok(life) = client.rdlife(upper.tool_num).await {
+                life.data
+            } else {
+                -1
+            };
+            let lower_life = if let Ok(life) = client.rdlife(lower.tool_num).await {
+                life.data
+            } else {
+                -1
+            };
+            let upper_count = if let Ok(count) = client.rdcount(upper.tool_num).await {
+                count.data
+            } else {
+                -1
+            };
+            let lower_count = if let Ok(count) = client.rdcount(lower.tool_num).await {
+                count.data
+            } else {
+                -1
+            };
 
             let upper_ui = ToolUiState {
                 data: upper.clone(),
                 current_offset: client
                     .rdtofs(upper.tool_num, 0)
+                    .await
                     .map(|v| v.data as f64 / 10000.0)
                     .unwrap_or(0.0),
                 previous_offset: upper_log
@@ -142,6 +157,7 @@ async fn get_all_machine_states(state: State<'_, AppState>) -> Result<Vec<Machin
                 data: lower.clone(),
                 current_offset: client
                     .rdtofs(lower.tool_num, 0)
+                    .await
                     .map(|v| v.data as f64 / 10000.0)
                     .unwrap_or(0.0),
                 previous_offset: lower_log
@@ -236,18 +252,10 @@ fn get_font_size(state: State<'_, AppState>) -> u32 {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            #[cfg(target_os = "linux")]
-            {
-                let log_file = std::ffi::CString::new("focas2.log").unwrap();
-                unsafe {
-                    use crate::fwlib::cnc_startupprocess;
-                    cnc_startupprocess(3, log_file.as_ptr())
-                };
-            }
             let config = AppConfig::load("config.json");
             let mut handle_table = HashMap::new();
             for machine in &config.machines {
-                match FocasClient::new(&machine.ip, machine.port as i16, 10) {
+                match FocasShell::new(&machine.ip, machine.port as u16) {
                     Ok(client) => {
                         println!(
                             "Connected to CNC {} at {}:{}",
@@ -341,10 +349,6 @@ pub fn run() {
                     if let Err(e) = config.save("config.json") {
                         eprintln!("Failed to save config: {}", e);
                     }
-                }
-                #[cfg(target_os = "linux")]
-                unsafe {
-                    fwlib::cnc_exitprocess();
                 }
             }
         })
