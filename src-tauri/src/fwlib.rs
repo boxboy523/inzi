@@ -3,128 +3,22 @@ use std::{
     os::raw::{c_char, c_long, c_short, c_ulong},
 };
 
+#[cfg(target_os = "windows")]
+#[allow(warnings)]
+pub mod bindings {
+    include!("bindings_window.rs");
+}
+#[cfg(target_os = "linux")]
+#[allow(warnings)]
+pub mod bindings {
+    include!("bindings_linux.rs");
+}
+
+use bindings::*;
+
 use anyhow::anyhow;
 use std::sync::{Arc, Mutex, RwLock};
 
-pub type FwlibHndl = c_ulong;
-
-#[repr(C)]
-pub struct ODBTOFS {
-    pub datano: c_short,
-    pub ofs_type: c_short,
-    pub data: c_long,
-}
-
-#[repr(C)]
-pub struct ODBTLIFE3 {
-    pub datano: c_short,
-    pub dummy: c_short,
-    pub data: c_long,
-}
-
-#[repr(C)]
-pub struct ODBERR {
-    pub err_no: c_short,
-    pub err_dtno: c_short,
-}
-
-#[repr(C)]
-pub struct ODBSYS {
-    pub dummy: c_short,
-    pub max_axis: [c_uchar; 2],
-    pub cnc_type: [c_uchar; 2],
-    pub mt_type: [c_uchar; 2],
-    pub series: [c_uchar; 4],
-    pub version: [c_uchar; 4],
-    pub axes: [c_uchar; 2],
-}
-
-#[derive(Debug)]
-pub struct DummyState {
-    pub offsets: std::collections::HashMap<i16, i32>,
-    pub life: i16,
-    pub count: i16,
-}
-
-#[cfg(target_os = "windows")]
-#[link(name = "Fwlib64")]
-extern "C" {
-    fn cnc_allclibhndl3(
-        ip_addr: *const c_char,
-        port: c_short,
-        timeout: c_long,
-        flibhndl: *mut FwlibHndl,
-    ) -> c_short;
-
-    fn cnc_freelibhndl(flibhndl: FwlibHndl) -> c_short;
-
-    fn cnc_rdtofs(
-        flibhndl: FwlibHndl,
-        number: c_short,
-        ofs_type: c_short,
-        length: c_short,
-        tofs: *mut ODBTOFS,
-    ) -> c_short;
-
-    fn cnc_wrtofs(
-        flibhndl: FwlibHndl,
-        number: c_short,
-        ofs_type: c_short,
-        length: c_short,
-        data: c_long,
-    ) -> c_short;
-
-    pub fn cnc_rdlife(flibhndl: FwlibHndl, number: c_short, life: *mut ODBTLIFE3) -> c_short;
-
-    pub fn cnc_rdcount(flibhndl: FwlibHndl, number: c_short, count: *mut ODBTLIFE3) -> c_short;
-
-    pub fn cnc_getdtailerr(flibhndl: FwlibHndl, err: *mut ODBERR) -> c_short;
-
-    pub fn cnc_sysinfo(flibhndl: FwlibHndl, sys: *mut ODBSYS) -> c_short;
-}
-
-#[cfg(target_os = "linux")]
-#[link(name = "fwlib32")]
-extern "C" {
-    fn cnc_allclibhndl3(
-        ip_addr: *const c_char,
-        port: c_short,
-        timeout: c_long,
-        flibhndl: *mut FwlibHndl,
-    ) -> c_short;
-
-    fn cnc_freelibhndl(flibhndl: FwlibHndl) -> c_short;
-
-    fn cnc_rdtofs(
-        flibhndl: FwlibHndl,
-        number: c_short,
-        ofs_type: c_short,
-        length: c_short,
-        tofs: *mut ODBTOFS,
-    ) -> c_short;
-
-    fn cnc_wrtofs(
-        flibhndl: FwlibHndl,
-        number: c_short,
-        ofs_type: c_short,
-        length: c_short,
-        data: c_long,
-    ) -> c_short;
-
-    pub fn cnc_rdlife(flibhndl: FwlibHndl, number: c_short, life: *mut ODBTLIFE3) -> c_short;
-
-    pub fn cnc_rdcount(flibhndl: FwlibHndl, number: c_short, count: *mut ODBTLIFE3) -> c_short;
-
-    pub fn cnc_getdtailerr(flibhndl: FwlibHndl, err: *mut ODBERR) -> c_short;
-
-    pub fn cnc_sysinfo(flibhndl: FwlibHndl, sys: *mut ODBSYS) -> c_short;
-
-    pub fn cnc_startupprocess(level: c_long, filename: *const c_char) -> c_short;
-
-    pub fn cnc_exitprocess() -> c_short;
-}
-
-#[derive(Debug, Clone)]
 pub struct FocasClient {
     handle: Arc<Mutex<FwlibHndl>>,
     pub ip: String,
@@ -212,7 +106,7 @@ impl FocasClient {
                     data as c_long,
                 );
                 if ret != 0 {
-                    Err(self.get_error().unwrap_or_else(|e| anyhow!(e.to_string())))
+                    Err(self.get_error())
                 } else {
                     Ok(())
                 }
@@ -309,7 +203,7 @@ impl FocasClient {
                 );
                 Ok(tofs)
             } else {
-                let err = self.get_error().unwrap_or_else(|e| anyhow!(e.to_string()));
+                let err = self.get_error();
                 eprintln!(
                     "Failed to read TOFS: number={}, ofs_type={} from CNC at {}. Error: {}",
                     number, ofs_type, self.ip, err
@@ -347,7 +241,7 @@ impl FocasClient {
             if ret == 0 {
                 Ok(life.data as i16)
             } else {
-                let err = self.get_error().unwrap_or_else(|e| anyhow!(e.to_string()));
+                let err = self.get_error();
                 eprintln!(
                     "Failed to read life: number={} from CNC at {}. Error: {}",
                     number, self.ip, err
@@ -385,7 +279,7 @@ impl FocasClient {
             if ret == 0 {
                 Ok(count.data as i16)
             } else {
-                let err = self.get_error().unwrap_or_else(|e| anyhow!(e.to_string()));
+                let err = self.get_error();
                 eprintln!(
                     "Failed to read count: number={} from CNC at {}. Error: {}",
                     number, self.ip, err
@@ -415,17 +309,17 @@ impl FocasClient {
         *guard
     }
 
-    pub fn get_error(&self) -> anyhow::Result<anyhow::Error> {
+    pub fn get_error(&self) -> anyhow::Error {
         if self.is_busy() || !self.is_connected() {
-            anyhow::bail!("CNC is currently busy with another operation");
+            return anyhow::anyhow!("CNC is currently busy with another operation");
         }
         if let Some(_) = &self.dummy_state {
-            return Ok(anyhow::anyhow!(
+            return anyhow::anyhow!(
                 "Dummy client error: no real CNC connection, so no real error details"
-            ));
+            );
         }
         let current_handle = {
-            let guard = self.handle.lock().map_err(|_| anyhow!("Mutex poisoned"))?;
+            let guard = self.handle.lock().unwrap();
             *guard
         };
         let mut err = ODBERR {
@@ -435,20 +329,17 @@ impl FocasClient {
         unsafe {
             let ret = cnc_getdtailerr(current_handle, &mut err as *mut ODBERR);
             if ret == 0 {
-                Ok(anyhow::anyhow!(
+                anyhow::anyhow!(
                     "CNC Error: err_no={}, err_dtno={}",
                     err.err_no,
                     err.err_dtno
-                ))
+                )
             } else {
                 eprintln!(
                     "Failed to get error details from CNC at {}. Error code: {}",
                     self.ip, ret
                 );
-                Err(anyhow::anyhow!(
-                    "Failed to get error details: error code {}",
-                    ret
-                ))
+                anyhow::anyhow!("Failed to get error details: error code {}", ret)
             }
         }
     }

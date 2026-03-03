@@ -45,6 +45,9 @@
           dbus           # dbus-daemon 등
           wget
           curl
+
+          llvmPackages.libclang
+          clang
         ] ++ libraries;
         # Rust 툴체인 설정 (Stable 버전 + rust-analyzer 포함)
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
@@ -61,6 +64,7 @@
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath libraries}:${./src-tauri/lib}";
           XDG_DATA_DIRS = "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS";
+          LIBCLANG_PATH = pkgs.lib.makeLibraryPath [ pkgs.llvmPackages.libclang.lib ];
         };
       }
     );
