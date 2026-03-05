@@ -111,8 +111,6 @@ impl GaugeBatches {
                     tool_lower.avg_gauge = Some(avg_point);
                     tool_upper.final_offset = tool_upper.get_final_offset();
                     tool_lower.final_offset = tool_lower.get_final_offset();
-                    tool_upper.manual_offset = 0.0;
-                    tool_lower.manual_offset = 0.0;
                     let upper = if tool_upper.active {
                         tool_upper
                             .get_final_offset_as_i32()
@@ -167,14 +165,17 @@ pub fn spawn_cnc_loop(
                     });
                     let handle_table_clone = Arc::clone(&acc.handle_table);
                     let logger_clone = Arc::clone(&logger);
+                    let tool_data_clone = Arc::clone(&acc.tool_data);
                     tokio::spawn(async move {
                         let iter = results.into_iter().map(|(machine_id, tool_num, offset)| {
                             let handle_table = Arc::clone(&handle_table_clone);
                             let logger = Arc::clone(&logger_clone);
+                            let tool_data = Arc::clone(&tool_data_clone);
                             async move {
                                 write_offset_to_cnc(
                                     handle_table,
                                     logger,
+                                    tool_data,
                                     machine_id,
                                     tool_num,
                                     offset,
@@ -271,6 +272,7 @@ pub async fn update_offset_logs(
 pub async fn write_offset_to_cnc(
     handle_table: Arc<HashMap<u16, FocasClient>>,
     logger: Arc<HistoryLogger>,
+    tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
     machine_id: u16,
     tool_num: i16,
     offset_diff: i32,
@@ -280,7 +282,15 @@ pub async fn write_offset_to_cnc(
         let old_offset = current_offset.data as i32;
         let new_offset = current_offset.data as i32 + offset_diff;
         let result = client.wrtofs(tool_num, 0, new_offset);
-
+        if result.is_ok() {
+            println!(
+                "Successfully updated offset for machine {}, tool {}: {} -> {}",
+                machine_id, tool_num, old_offset, new_offset
+            );
+            if upper.tool_num == tool_num {
+                upper.manual_offset = 0.0;
+            }
+        }
         logger.log(OffsetLog {
             timestamp: chrono::Utc::now(),
             machine_id,
