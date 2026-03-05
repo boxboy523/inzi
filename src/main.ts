@@ -170,8 +170,8 @@ function renderTable() {
     machines.forEach(m => {
         bodyHtml += `<td class="border border-gray-400">
             <div class="grid grid-cols-2 gap-1 text-xs">
-                <div>황: ${(m.upper_tool.final_offset || 0).toFixed(4)}</div>
-                <div>정: ${(m.lower_tool.final_offset || 0).toFixed(4)}</div>
+                <div>황: ${(m.upper_tool.final_offset || 0).toFixed(3)}</div>
+                <div>정: ${(m.lower_tool.final_offset || 0).toFixed(3)}</div>
             </div>
         </td>`;
     });
@@ -183,11 +183,11 @@ function renderTable() {
             <div class="grid grid-cols-2 h-full text-xs">
                 <div class="border-r border-gray-400 flex items-center justify-center cursor-pointer hover:bg-yellow-300" 
                      data-action="history" data-id="${m.machine_id}" data-tool="${m.upper_tool.tool_num}">
-                    ${m.upper_tool.previous_offset.toFixed(4)}
+                    ${m.upper_tool.previous_offset.toFixed(3)}
                 </div>
                 <div class="flex items-center justify-center cursor-pointer hover:bg-yellow-300" 
                      data-action="history" data-id="${m.machine_id}" data-tool="${m.lower_tool.tool_num}">
-                    ${m.lower_tool.previous_offset.toFixed(4)}
+                    ${m.lower_tool.previous_offset.toFixed(3)}
                 </div>
             </div>
         </td>`;
@@ -195,17 +195,18 @@ function renderTable() {
     bodyHtml += `</tr>`;
 
     // 현재 옵셋
+    bodyHtml += `</tr>`;
     bodyHtml += `<tr class="bg-[#FFC000] h-10"><td class="bg-[#00B0F0] text-white font-bold border border-white">현재 옵셋</td>`;
     machines.forEach(m => {
         bodyHtml += `<td class="border border-gray-400 p-0">
             <div class="grid grid-cols-2 h-full text-xs">
                 <div class="border-r border-gray-400 flex items-center justify-center cursor-pointer hover:bg-yellow-300" 
-                     data-action="history" data-id="${m.machine_id}" data-tool="${m.upper_tool.tool_num}">
-                    ${m.upper_tool.current_offset.toFixed(4)}
+                     data-action="write-offset" data-id="${m.machine_id}" data-tool="${m.upper_tool.tool_num}" data-title="황삭 옵셋 쓰기">
+                    ${m.upper_tool.current_offset.toFixed(3)}
                 </div>
                 <div class="flex items-center justify-center cursor-pointer hover:bg-yellow-300" 
-                     data-action="history" data-id="${m.machine_id}" data-tool="${m.lower_tool.tool_num}">
-                    ${m.lower_tool.current_offset.toFixed(4)}
+                     data-action="write-offset" data-id="${m.machine_id}" data-tool="${m.lower_tool.tool_num}" data-title="정삭 옵셋 쓰기">
+                    ${m.lower_tool.current_offset.toFixed(3)}
                 </div>
             </div>
         </td>`;
@@ -313,6 +314,7 @@ document.addEventListener('click', async (e) => {
         let val = 0;
         if (field === 'batch_size') val = machine.batch_size;
         else if (field === 'offset_rate') val = (tool as any)[field] * 100;
+        else if (field === 'manual_offset') val = Math.round((tool as any)[field] * 1000);
         else val = (tool as any)[field];
 
         editContext = { machineId, isUpper, field };
@@ -339,13 +341,13 @@ document.addEventListener('click', async (e) => {
             document.getElementById('history-title')!.textContent = `오프셋 수정 이력 (${machineId}호기 - 공구 ${toolNum})`;
             
             const historyBody = document.getElementById('history-body')!;
-            // 값을 10000으로 나누어 소수점 4자리 형태로 표시
+            // 값을 1000으로 나누어 소수점 3자리 형태로 표시
             historyBody.innerHTML = logs.map(log => `
                 <tr class="border-b hover:bg-gray-100">
                     <td class="p-1">${new Date(log.timestamp).toLocaleString()}</td>
-                    <td class="p-1">${(log.old_value / 10000).toFixed(4)}</td>
-                    <td class="p-1 font-bold ${log.change_amount > 0 ? 'text-red-600' : 'text-blue-600'}">${(log.change_amount / 10000).toFixed(4)}</td>
-                    <td class="p-1">${(log.new_value / 10000).toFixed(4)}</td>
+                    <td class="p-1">${(log.old_value / 1000).toFixed(3)}</td>
+                    <td class="p-1 font-bold ${log.change_amount > 0 ? 'text-red-600' : 'text-blue-600'}">${(log.change_amount / 1000).toFixed(3)}</td>
+                    <td class="p-1">${(log.new_value / 1000).toFixed(3)}</td>
                     <td class="p-1">${log.success ? 'O' : 'X'}</td>
                 </tr>
             `).join('');
@@ -353,6 +355,19 @@ document.addEventListener('click', async (e) => {
             historyModal.classList.remove('hidden');
             historyModal.classList.add('flex');
         } catch (err) { alert("로그 조회 실패: " + err); }
+    }
+    else if (action === 'write-offset') {
+        const toolNum = Number(actionTarget.getAttribute('data-tool'));
+        const title = actionTarget.getAttribute('data-title') || '옵셋 변경';
+        
+        // 현재 클릭한 기계 ID, 어떤 액션인지, 툴 번호를 context에 저장
+        editContext = { machineId, field: 'write_offset', toolNum };
+        
+        document.getElementById('edit-title')!.textContent = `${machineId + 1}호기 ${title} (변화량 입력)`;
+        (document.getElementById('edit-input') as HTMLInputElement).value = '0'; // 기본값 0으로 초기화
+        
+        editModal.classList.remove('hidden');
+        editModal.classList.add('flex');
     }
     else if (action === 'popup-avg') {
         alert(`${machineId}호기 현재 수집된 게이지 데이터 팝업 (구현 필요)`);
@@ -386,14 +401,23 @@ document.getElementById('btn-edit-save')!.addEventListener('click', async (e) =>
     try {
         if (editContext.field === 'batch_size') {
             await invoke('update_batch_size', { machineId: editContext.machineId, newSize: Math.floor(inputVal) });
+        } else if (editContext.field === 'write_offset') {
+            // 추가된 부분: 바로쓰기 로직
+            const offsetDiff = Math.round(inputVal); // 소수점이 아니라 정수 형태의 단위(예: 10, -5)를 그대로 넘긴다고 가정
+            await invoke('force_write_offset', {
+                machineId: editContext.machineId,
+                toolNum: editContext.toolNum,
+                offsetDiff: offsetDiff
+            });
         } else {
-            const finalVal = editContext.field === 'offset_rate' ? inputVal / 100.0 : inputVal;
+            const finalVal = editContext.field === 'offset_rate' ? inputVal / 100.0 :
+                ( editContext.field === 'manual_offset' ? inputVal / 1000.0 : inputVal );
             const args: any = {
                 machineId: editContext.machineId,
                 isUpper: editContext.isUpper,
                 basicSize: null, manualOffset: null, offsetRate: null, active: null, toolNum: null
             };
-            
+
             if (editContext.field === 'basic_size') args.basicSize = finalVal;
             if (editContext.field === 'manual_offset') args.manualOffset = finalVal;
             if (editContext.field === 'offset_rate') args.offsetRate = finalVal;

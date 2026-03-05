@@ -60,8 +60,8 @@
 
           buildInputs = packages;
 
-          CC_i686_pc_windows_msvc = "${pkgs.clang}/bin/clang";
-          CXX_i686_pc_windows_msvc = "${pkgs.clang}/bin/clang++";
+          CC_i686_pc_windows_msvc = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
+          CXX_i686_pc_windows_msvc = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang++";
           AR_i686_pc_windows_msvc = "${pkgs.llvmPackages.llvm}/bin/llvm-ar";
           RC_i686_pc_windows_msvc = "${pkgs.llvmPackages.llvm}/bin/llvm-rc";
 
@@ -81,10 +81,9 @@
             export RUSTFLAGS="-L native=$XWIN_CACHE_DIR/xwin/crt/lib/x86 \
                               -L native=$XWIN_CACHE_DIR/xwin/sdk/lib/ucrt/x86 \
                               -L native=$XWIN_CACHE_DIR/xwin/sdk/lib/um/x86"
-            export CFLAGS_i686_pc_windows_msvc="-Wno-unused-command-line-argument"
 
-            export CC_i686_pc_windows_msvc="${pkgs.clang}/bin/clang"
-            export CXX_i686_pc_windows_msvc="${pkgs.clang}/bin/clang++"
+            export CC_i686_pc_windows_msvc="${pkgs.llvmPackages.clang-unwrapped}/bin/clang"
+            export CXX_i686_pc_windows_msvc="${pkgs.llvmPackages.clang-unwrapped}/bin/clang++"
             export AR_i686_pc_windows_msvc="${pkgs.llvmPackages.llvm}/bin/llvm-lib"
 
             echo "✅ Windows 32bit (i686-pc-windows-msvc) build environment loaded."

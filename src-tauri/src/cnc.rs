@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
 
 use anyhow::anyhow;
-use focas_rs::FocasShell;
+use focas_rs::FocasClient;
 use futures::future::join_all;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use crate::{gauge::GaugeResponse, logger::HistoryLogger};
 pub struct GaugeBatches {
     batches: HashMap<u16, Vec<i32>>, // (machine_id, tool_num) -> batch of points
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>, // machine_id -> (ToolDataUpper , ToolDataLower)
-    handle_table: Arc<HashMap<u16, FocasShell>>,
+    handle_table: Arc<HashMap<u16, FocasClient>>,
     batch_size: Arc<Mutex<HashMap<u16, usize>>>, // machine_id -> batch_size
 }
 
@@ -43,7 +43,7 @@ impl ToolData {
 
     fn get_final_offset_as_i32(&self) -> Option<i32> {
         self.get_final_offset()
-            .map(|offset| (offset * 10000.0).round() as i32)
+            .map(|offset| (offset * 1000.0).round() as i32)
     }
 }
 
@@ -51,7 +51,7 @@ impl GaugeBatches {
     pub fn new(
         batch_size: Arc<Mutex<HashMap<u16, usize>>>,
         tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
-        handle_table: Arc<HashMap<u16, FocasShell>>,
+        handle_table: Arc<HashMap<u16, FocasClient>>,
     ) -> Self {
         Self {
             batches: HashMap::new(),
@@ -63,13 +63,10 @@ impl GaugeBatches {
 
     pub fn insert(&mut self, gauge_response: &GaugeResponse) {
         let active = gauge_response.active_line;
-        if let Some(line) = gauge_response.lines.iter().find(|l| l.line_id == active) {
-            // PLC 라인번호(1,2,3) → machine_id(0,1,2) 변환
-            let machine_id = active.saturating_sub(1);
-            let batch = self.batches.entry(machine_id).or_insert_with(Vec::new);
-            batch.push(line.value1);
-            batch.push(line.value2);
-        }
+        let machine_id = active.saturating_sub(1);
+        let batch = self.batches.entry(machine_id).or_insert_with(Vec::new);
+        batch.push(gauge_response.value1);
+        batch.push(gauge_response.value2);
     }
 
     pub fn extract_all(&mut self) -> anyhow::Result<Vec<(u16, i16, i32)>> {
@@ -90,10 +87,7 @@ impl GaugeBatches {
         &mut self,
         key: u16,
     ) -> anyhow::Result<(Option<(u16, i16, i32)>, Option<(u16, i16, i32)>)> {
-        if let Some(handle) = self.handle_table.get(&key) {
-            if !handle.is_running() {
-                return Ok((None, None));
-            }
+        if let Some(_handle) = self.handle_table.get(&key) {
         } else {
             self.batches.remove(&key);
             return Err(anyhow!("No CNC client found for machine {}", key));
@@ -117,6 +111,8 @@ impl GaugeBatches {
                     tool_lower.avg_gauge = Some(avg_point);
                     tool_upper.final_offset = tool_upper.get_final_offset();
                     tool_lower.final_offset = tool_lower.get_final_offset();
+                    tool_upper.manual_offset = 0.0;
+                    tool_lower.manual_offset = 0.0;
                     let upper = if tool_upper.active {
                         tool_upper
                             .get_final_offset_as_i32()
@@ -144,7 +140,7 @@ impl GaugeBatches {
 
 pub fn spawn_cnc_loop(
     receiver: Receiver<GaugeResponse>,
-    handle_table: Arc<HashMap<u16, FocasShell>>,
+    handle_table: Arc<HashMap<u16, FocasClient>>,
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
     batch_size: Arc<Mutex<HashMap<u16, usize>>>,
     logger: Arc<HistoryLogger>,
@@ -202,7 +198,7 @@ pub fn spawn_cnc_loop(
 
 pub async fn update_offset_logs(
     logger: Arc<HistoryLogger>,
-    handle_table: Arc<HashMap<u16, FocasShell>>,
+    handle_table: Arc<HashMap<u16, FocasClient>>,
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
 ) {
     let mut last_offsets: HashMap<(u16, i16), i32> = HashMap::new();
@@ -219,15 +215,8 @@ pub async fn update_offset_logs(
 
         for (machine_id, tool_upper, tool_lower) in snapshot {
             if let Some(client) = handle_table.get(&machine_id) {
-                if !client.is_running() {
-                    println!(
-                        "Skipping offset check for machine {}: not connected",
-                        machine_id
-                    );
-                    continue;
-                }
                 println!("Checking offsets for machine {}...", machine_id);
-                if let Ok(current_upper) = client.rdtofs(tool_upper.tool_num, 0).await {
+                if let Ok(current_upper) = client.rdtofs(tool_upper.tool_num, 0) {
                     let current_upper_value = current_upper.data as i32;
                     let last_upper_value = last_offsets
                         .get(&(machine_id, tool_upper.tool_num))
@@ -250,7 +239,7 @@ pub async fn update_offset_logs(
                     }
                     last_offsets.insert((machine_id, tool_upper.tool_num), current_upper_value);
                 }
-                if let Ok(current_lower) = client.rdtofs(tool_lower.tool_num, 0).await {
+                if let Ok(current_lower) = client.rdtofs(tool_lower.tool_num, 0) {
                     let current_lower_value = current_lower.data as i32;
                     let last_lower_value = last_offsets
                         .get(&(machine_id, tool_lower.tool_num))
@@ -279,18 +268,18 @@ pub async fn update_offset_logs(
     }
 }
 
-async fn write_offset_to_cnc(
-    handle_table: Arc<HashMap<u16, FocasShell>>,
+pub async fn write_offset_to_cnc(
+    handle_table: Arc<HashMap<u16, FocasClient>>,
     logger: Arc<HistoryLogger>,
     machine_id: u16,
     tool_num: i16,
     offset_diff: i32,
 ) -> anyhow::Result<()> {
     if let Some(client) = handle_table.get(&machine_id) {
-        let current_offset = client.rdtofs(tool_num, 0).await?;
+        let current_offset = client.rdtofs(tool_num, 0)?;
         let old_offset = current_offset.data as i32;
         let new_offset = current_offset.data as i32 + offset_diff;
-        let result = client.wrtofs(tool_num, 0, new_offset).await;
+        let result = client.wrtofs(tool_num, 0, new_offset);
 
         logger.log(OffsetLog {
             timestamp: chrono::Utc::now(),

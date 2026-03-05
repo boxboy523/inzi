@@ -126,8 +126,8 @@ pub async fn gauge_get_response(
             |(ch, sink, mut last_plc_on), response| async move {
                 if response.plc_data_on && !last_plc_on {
                     println!(
-                        "Measurement complete for line {}: raw = {}",
-                        response.active_line, response.raw_data
+                        "Measurement complete for line {}: raw = {}, data1: {} data2: {}",
+                        response.active_line, response.raw_data, response.value1, response.value2
                     );
                     if let Err(e) = ch.send(response.clone()) {
                         eprintln!("Failed to send gauge response to channel: {}", e);
@@ -145,18 +145,12 @@ pub async fn gauge_get_response(
 }
 
 #[derive(Debug, Clone)]
-pub struct LineMeasurement {
-    pub line_id: u16,
-    pub value1: i32,
-    pub value2: i32,
-}
-
-#[derive(Debug, Clone)]
 pub struct GaugeResponse {
     pub active_line: u16,
     pub raw_data: String,
     pub plc_data_on: bool,
-    pub lines: [LineMeasurement; 3],
+    pub value1: i32,
+    pub value2: i32,
 }
 
 const PLC_MEASUREMENT_COMPLETE: u16 = 2;
@@ -189,33 +183,12 @@ impl GaugeResponse {
             let fractional = i16::from_le_bytes([bytes[base + 2], bytes[base + 3]]);
             integer as i32 * 10000 + fractional as i32
         };
-
-        // 라인1: D6010-11(bytes31-34), D6012-13(bytes35-38)
-        // 라인2: D6014-15(bytes39-42), D6016-17(bytes43-46)
-        // 라인3: D6018-19(bytes47-50), D6020-21(bytes51-54)
-        let lines = [
-            LineMeasurement {
-                line_id: 1,
-                value1: parse_value(31),
-                value2: parse_value(35),
-            },
-            LineMeasurement {
-                line_id: 2,
-                value1: parse_value(39),
-                value2: parse_value(43),
-            },
-            LineMeasurement {
-                line_id: 3,
-                value1: parse_value(47),
-                value2: parse_value(51),
-            },
-        ];
-
         Some(Self {
             active_line,
             raw_data: hex::encode(&bytes),
             plc_data_on: plc_data_on_raw == PLC_MEASUREMENT_COMPLETE,
-            lines,
+            value1: parse_value(39), // D6012
+            value2: parse_value(43), // D6013
         })
     }
 }

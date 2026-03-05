@@ -2,11 +2,11 @@ use std::sync::{Arc, OnceLock};
 use std::{collections::HashMap, sync::Mutex};
 
 use chrono::{DateTime, Utc};
-use focas_rs::FocasShell;
+use focas_rs::FocasClient;
 use serde::Serialize;
 use tauri::{Manager, State};
 
-use crate::cnc::{update_offset_logs, ToolData};
+use crate::cnc::{update_offset_logs, write_offset_to_cnc, ToolData};
 use crate::logger::HistoryLogger;
 use crate::{cnc::spawn_cnc_loop, config::AppConfig, gauge::spawn_gauge_stream};
 
@@ -25,9 +25,10 @@ pub struct HexCommands {
 static HEX_CMDS: OnceLock<HexCommands> = OnceLock::new();
 
 pub struct AppState {
-    pub handle_table: Arc<HashMap<u16, FocasShell>>,
+    pub handle_table: Arc<HashMap<u16, FocasClient>>,
     pub tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
     pub batch_size: Arc<Mutex<HashMap<u16, usize>>>,
+    pub logger: Arc<HistoryLogger>,
     pub password: String,
     pub log_path: String,
     pub font_size: u32,
@@ -118,22 +119,22 @@ async fn get_all_machine_states(state: State<'_, AppState>) -> Result<Vec<Machin
                 .get(&id)
                 .ok_or_else(|| format!("No CNC client found for machine {}", id))?;
 
-            let upper_life = if let Ok(life) = client.rdlife(upper.tool_num).await {
+            let upper_life = if let Ok(life) = client.rdlife(upper.tool_num) {
                 life.data
             } else {
                 -1
             };
-            let lower_life = if let Ok(life) = client.rdlife(lower.tool_num).await {
+            let lower_life = if let Ok(life) = client.rdlife(lower.tool_num) {
                 life.data
             } else {
                 -1
             };
-            let upper_count = if let Ok(count) = client.rdcount(upper.tool_num).await {
+            let upper_count = if let Ok(count) = client.rdcount(upper.tool_num) {
                 count.data
             } else {
                 -1
             };
-            let lower_count = if let Ok(count) = client.rdcount(lower.tool_num).await {
+            let lower_count = if let Ok(count) = client.rdcount(lower.tool_num) {
                 count.data
             } else {
                 -1
@@ -143,12 +144,11 @@ async fn get_all_machine_states(state: State<'_, AppState>) -> Result<Vec<Machin
                 data: upper.clone(),
                 current_offset: client
                     .rdtofs(upper.tool_num, 0)
-                    .await
-                    .map(|v| v.data as f64 / 10000.0)
+                    .map(|v| v.data as f64 / 1000.0)
                     .unwrap_or(0.0),
                 previous_offset: upper_log
                     .as_ref()
-                    .map_or(0.0, |log| log.old_value as f64 / 10000.0),
+                    .map_or(0.0, |log| log.old_value as f64 / 1000.0),
                 life: upper_life,
                 count: upper_count,
             };
@@ -157,12 +157,11 @@ async fn get_all_machine_states(state: State<'_, AppState>) -> Result<Vec<Machin
                 data: lower.clone(),
                 current_offset: client
                     .rdtofs(lower.tool_num, 0)
-                    .await
-                    .map(|v| v.data as f64 / 10000.0)
+                    .map(|v| v.data as f64 / 1000.0)
                     .unwrap_or(0.0),
                 previous_offset: lower_log
                     .as_ref()
-                    .map_or(0.0, |log| log.old_value as f64 / 10000.0),
+                    .map_or(0.0, |log| log.old_value as f64 / 1000.0),
                 life: lower_life,
                 count: lower_count,
             };
@@ -244,6 +243,28 @@ async fn update_batch_size(
 }
 
 #[tauri::command]
+async fn force_write_offset(
+    machine_id: u16,
+    tool_num: i16,
+    offset_diff: i32,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    write_offset_to_cnc(
+        state.handle_table.clone(),
+        state.logger.clone(),
+        machine_id,
+        tool_num,
+        offset_diff,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    println!(
+        "Force write offset: machine_id={}, tool_num={}, offset_diff={}",
+        machine_id, tool_num, offset_diff
+    );
+    Ok(())
+}
+#[tauri::command]
 fn get_font_size(state: State<'_, AppState>) -> u32 {
     state.font_size
 }
@@ -255,7 +276,8 @@ pub fn run() {
             let config = AppConfig::load("config.json");
             let mut handle_table = HashMap::new();
             for machine in &config.machines {
-                match FocasShell::new(&machine.ip, machine.port as u16) {
+                let client_res = FocasClient::new(&machine.ip, machine.port as u16);
+                match client_res {
                     Ok(client) => {
                         println!(
                             "Connected to CNC {} at {}:{}",
@@ -289,6 +311,7 @@ pub fn run() {
                 handle_table: handle_table.clone(),
                 tool_data: Arc::new(Mutex::new(config.mapping.tool_data.clone())),
                 batch_size: Arc::new(Mutex::new(config.mapping.batch_size)),
+                logger: history_logger.clone(),
                 password: config.admin.password.clone(),
                 log_path: config.log_path.clone(),
                 font_size: config.ui.font_size,
@@ -359,6 +382,7 @@ pub fn run() {
             get_all_machine_states,
             update_tool_settings,
             update_batch_size,
+            force_write_offset,
             get_font_size,
         ])
         .run(tauri::generate_context!())
