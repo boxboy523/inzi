@@ -15,6 +15,8 @@ interface ToolData {
     previous_offset: number;
     life: number;
     count: number;
+    max_limit: number;
+    min_limit: number;
 }
 
 interface MachineUiState {
@@ -32,9 +34,20 @@ interface OffsetLog {
     success: boolean;
 }
 
+interface RawGaugeLog {
+    id: number;
+    timestamp: string;
+    active_line: number;
+    tool_type: number;      // 1: 황삭, 2: 정삭
+    measured_value: number;
+    is_used: number;        // 0: 대기중, 1: 사용중, 2: 사용됨
+}
+
 // --- 상태 관리 ---
 let machines: MachineUiState[] = [];
 let editContext: any = null; // 현재 수정 중인 데이터 컨텍스트
+let currentGaugeLogs: RawGaugeLog[] = [];     // 모달에 띄울 원본 로그 데이터
+let currentGaugeFilter: string = 'all'; // 현재 필터 상태 ('all', '0', '1', '2')
 
 // --- DOM 요소 참조 ---
 const tableHead = document.getElementById('table-head')!;
@@ -78,7 +91,8 @@ function renderTable() {
     // 평균 경치수
     bodyHtml += `<tr class="bg-[#FFC000] h-10"><td class="bg-[#00B0F0] text-white font-bold border border-white">평균 경치수</td>`;
     machines.forEach(m => {
-        bodyHtml += `<td class="border border-gray-400 data-id="${m.machine_id}">
+        bodyHtml += `<td class="border border-gray-400 cursor-pointer hover:bg-yellow-300 transition" 
+            data-action="view-raw-gauge" data-id="${m.machine_id}">
             ${(m.upper_tool.avg_gauge || 0).toFixed(3)}
         </td>`;
     });
@@ -101,9 +115,9 @@ function renderTable() {
         bodyHtml += `<td class="border border-gray-400 p-0">
             <div class="grid grid-cols-2 h-full items-center">
                 <div class="border-r border-gray-400 h-full flex items-center justify-center">${autoOffset}</div>
-                <div class="h-full flex items-center justify-center bg-[#00B050] text-white font-bold cursor-pointer hover:bg-green-600 m-1 rounded"
+                <div class="h-full flex items-center justify-center cursor-pointer hover:bg-yellow-300 font-bold transition"
                     data-action="edit" data-id="${m.machine_id}" data-upper="true" data-field="manual_offset" data-title="수동 보정값">
-                    ${m.upper_tool.manual_offset.toFixed(3)} <br> (INPUT)
+                    ${m.upper_tool.manual_offset.toFixed(3)}
                 </div>
             </div>
         </td>`;
@@ -168,15 +182,24 @@ function renderTable() {
     // 실 보정값
     bodyHtml += `<tr class="bg-[#FFC000] h-10"><td class="bg-[#00B0F0] text-white font-bold border border-white">실 보정값</td>`;
     machines.forEach(m => {
+        const upperReal = m.upper_tool.avg_gauge 
+            ? (m.upper_tool.basic_size - m.upper_tool.avg_gauge + m.upper_tool.manual_offset) * m.upper_tool.offset_rate 
+            : 0;
+
+        const lowerReal = m.lower_tool.avg_gauge 
+            ? (m.lower_tool.basic_size - m.lower_tool.avg_gauge + m.lower_tool.manual_offset) * m.lower_tool.offset_rate 
+            : 0;
+
         bodyHtml += `<td class="border border-gray-400">
-            <div class="grid grid-cols-2 gap-1 text-xs">
-                <div>황: ${(m.upper_tool.final_offset || 0).toFixed(3)}</div>
-                <div>정: ${(m.lower_tool.final_offset || 0).toFixed(3)}</div>
+            <div class="grid grid-cols-2 gap-1 text-xs font-bold">
+                <div class="text-blue-800">황: ${upperReal.toFixed(3)}</div>
+                <div class="text-blue-800">정: ${lowerReal.toFixed(3)}</div>
             </div>
         </td>`;
     });
     bodyHtml += `</tr>`;
 
+    // 이전 옵셋
     bodyHtml += `<tr class="bg-[#FFC000] h-10"><td class="bg-[#00B0F0] text-white font-bold border border-white">이전 옵셋</td>`;
     machines.forEach(m => {
         bodyHtml += `<td class="border border-gray-400 p-0">
@@ -194,19 +217,37 @@ function renderTable() {
     });
     bodyHtml += `</tr>`;
 
-    // 현재 옵셋
-    bodyHtml += `</tr>`;
-    bodyHtml += `<tr class="bg-[#FFC000] h-10"><td class="bg-[#00B0F0] text-white font-bold border border-white">현재 옵셋</td>`;
+    bodyHtml += `<tr class="bg-[#FFC000] h-10">
+        <td class="bg-[#00B0F0] text-white font-bold border border-white text-xs">1회 제한<br>(MAX/MIN)</td>`;
+    
     machines.forEach(m => {
         bodyHtml += `<td class="border border-gray-400 p-0">
-            <div class="grid grid-cols-2 h-full text-xs">
-                <div class="border-r border-gray-400 flex items-center justify-center cursor-pointer hover:bg-yellow-300" 
-                     data-action="write-offset" data-id="${m.machine_id}" data-tool="${m.upper_tool.tool_num}" data-title="황삭 옵셋 쓰기">
-                    ${m.upper_tool.current_offset.toFixed(3)}
+            <div class="grid grid-cols-2 h-full text-xs font-bold">
+                <div class="border-r border-gray-400 flex items-center justify-center cursor-pointer hover:bg-yellow-300 text-red-600"
+                     data-action="edit" data-id="${m.machine_id}" data-upper="true" data-field="upper_limit" data-title="1회 변화량 상한(+)">
+                    ▲ ${m.upper_tool.max_limit.toFixed(3)}
                 </div>
-                <div class="flex items-center justify-center cursor-pointer hover:bg-yellow-300" 
+                <div class="flex items-center justify-center cursor-pointer hover:bg-yellow-300 text-blue-700"
+                     data-action="edit" data-id="${m.machine_id}" data-upper="true" data-field="lower_limit" data-title="1회 변화량 하한(-)">
+                    ▼ ${m.upper_tool.min_limit.toFixed(3)}
+                </div>
+            </div>
+        </td>`;
+    });
+    bodyHtml += `</tr>`;
+    
+    // 현재 옵셋
+    bodyHtml += `<tr class="bg-[#FFC000] h-10"><td class="bg-[#00B0F0] text-white font-bold border border-white">직접 입</td>`;
+    machines.forEach(m => {
+        bodyHtml += `<td class="border border-gray-400 p-0">력
+            <div class="grid grid-cols-2 h-full text-xs">
+                <div class="flex items-center justify-center bg-[#00B050] text-white font-bold cursor-pointer hover:bg-green-600 m-1 rounded shadow transition"
+                     data-action="write-offset" data-id="${m.machine_id}" data-tool="${m.upper_tool.tool_num}" data-title="황삭 옵셋 쓰기">
+                    ${m.upper_tool.current_offset.toFixed(3)} <br> (INPUT)
+</div>
+                <div class="flex items-center justify-center bg-[#00B050] text-white font-bold cursor-pointer hover:bg-green-600 m-1 rounded shadow transition"
                      data-action="write-offset" data-id="${m.machine_id}" data-tool="${m.lower_tool.tool_num}" data-title="정삭 옵셋 쓰기">
-                    ${m.lower_tool.current_offset.toFixed(3)}
+                    ${m.lower_tool.current_offset.toFixed(3)} <br> (INPUT)
                 </div>
             </div>
         </td>`;
@@ -294,6 +335,12 @@ document.addEventListener('click', async (e) => {
         return;
     }
 
+    if (target.classList.contains('filter-btn')) {
+        currentGaugeFilter = target.getAttribute('data-status') || 'all';
+        renderRawGaugeTable();
+        return;
+    }
+
     // 2. 기존 동작 처리 로직 계속...
     const actionTarget = target.closest('[data-action]');
     if (!actionTarget) return;
@@ -314,7 +361,7 @@ document.addEventListener('click', async (e) => {
         let val = 0;
         if (field === 'batch_size') val = machine.batch_size;
         else if (field === 'offset_rate') val = (tool as any)[field] * 100;
-        else if (field === 'manual_offset') val = Math.round((tool as any)[field] * 1000);
+        else if (field === 'manual_offset') val = Math.round((tool as any)[field]);
         else val = (tool as any)[field];
 
         editContext = { machineId, isUpper, field };
@@ -338,7 +385,7 @@ document.addEventListener('click', async (e) => {
         const toolNum = Number(actionTarget.getAttribute('data-tool'));
         try {
             const logs: OffsetLog[] = await invoke('get_offset_history', { machineId, toolNum, limit: 100 });
-            document.getElementById('history-title')!.textContent = `오프셋 수정 이력 (${machineId}호기 - 공구 ${toolNum})`;
+            document.getElementById('history-title')!.textContent = `오프셋 수정 이력 (${machineId + 1}호기 - 공구 ${toolNum})`;
             
             const historyBody = document.getElementById('history-body')!;
             // 값을 1000으로 나누어 소수점 3자리 형태로 표시
@@ -371,6 +418,20 @@ document.addEventListener('click', async (e) => {
     }
     else if (action === 'popup-avg') {
         alert(`${machineId}호기 현재 수집된 게이지 데이터 팝업 (구현 필요)`);
+    } else if (action === 'view-raw-gauge') {
+        try {
+            // 백엔드에서 데이터 100개 호출 (한번만 호출)
+            currentGaugeLogs = await invoke<RawGaugeLog[]>('get_raw_gauge_logs', { machineId, limit: 100 });
+            currentGaugeFilter = 'all'; // 열 때 무조건 '전체보기'로 초기화
+            
+            document.getElementById('raw-gauge-title')!.textContent = `${machineId + 1}호기 게이지 수신 내역`;
+            
+            renderRawGaugeTable(); // 표 그리기
+
+            const rawModal = document.getElementById('raw-gauge-modal')!;
+            rawModal.classList.remove('hidden');
+            rawModal.classList.add('flex');
+        } catch (err) { alert("로그 조회 실패: " + err); }
     }
 });
 
@@ -383,6 +444,12 @@ document.getElementById('btn-edit-cancel')!.addEventListener('click', () => {
 document.getElementById('btn-history-close')!.addEventListener('click', () => {
     historyModal.classList.add('hidden');
     historyModal.classList.remove('flex');
+});
+
+document.getElementById('btn-raw-gauge-close')!.addEventListener('click', () => {
+    const rawModal = document.getElementById('raw-gauge-modal')!;
+    rawModal.classList.add('hidden');
+    rawModal.classList.remove('flex');
 });
 
 document.getElementById('btn-edit-save')!.addEventListener('click', async (e) => {
@@ -406,12 +473,11 @@ document.getElementById('btn-edit-save')!.addEventListener('click', async (e) =>
             const offsetDiff = Math.round(inputVal); // 소수점이 아니라 정수 형태의 단위(예: 10, -5)를 그대로 넘긴다고 가정
             await invoke('force_write_offset', {
                 machineId: editContext.machineId,
-                toolNum: editContext.toolNum,
+                toolNum: editContext.toolNum * 1000,
                 offsetDiff: offsetDiff
             });
         } else {
-            const finalVal = editContext.field === 'offset_rate' ? inputVal / 100.0 :
-                ( editContext.field === 'manual_offset' ? inputVal / 1000.0 : inputVal );
+            const finalVal = editContext.field === 'offset_rate' ? inputVal / 100.0 : inputVal;
             const args: any = {
                 machineId: editContext.machineId,
                 isUpper: editContext.isUpper,
@@ -432,6 +498,51 @@ document.getElementById('btn-edit-save')!.addEventListener('click', async (e) =>
         alert("저장 실패: " + e);
     }
 });
+
+function renderRawGaugeTable() {
+    const tbody = document.getElementById('raw-gauge-body')!;
+    
+    // 1. 필터링
+    const filteredLogs = currentGaugeLogs.filter(log => {
+        if (currentGaugeFilter === 'all') return true;
+        return log.is_used === parseInt(currentGaugeFilter);
+    });
+
+    // 2. 렌더링
+    tbody.innerHTML = filteredLogs.map(log => {
+        let rowClass = 'text-gray-400 hover:bg-gray-50'; // 기본: 사용됨(2)
+        let statusBadge = '<span class="bg-gray-200 text-gray-600 px-2 py-1 rounded-full text-xs">사용됨</span>';
+
+        if (log.is_used === 0) {
+            rowClass = 'bg-green-100 text-green-900 font-bold border-l-4 border-green-600';
+            statusBadge = '<span class="bg-green-200 text-green-800 px-2 py-1 rounded-full text-xs shadow-sm">대기중</span>';
+        } else if (log.is_used === 1) {
+            rowClass = 'bg-yellow-100 text-yellow-900 font-bold border-l-4 border-yellow-600';
+            statusBadge = '<span class="bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full text-xs shadow-sm">사용중</span>';
+        }
+
+        const typeLabel = log.tool_type === 1 ? '황삭' : '정삭';
+        
+        return `
+            <tr class="border-b transition-colors ${rowClass}">
+                <td class="p-2 text-center">${new Date(log.timestamp).toLocaleString()}</td>
+                <td class="p-2 text-center">${log.active_line}호기</td>
+                <td class="p-2 text-center"><span class="bg-blue-100 text-blue-800 px-1 rounded text-xs font-bold">${typeLabel}</span></td>
+                <td class="p-2 text-right font-mono text-lg pr-4">${log.measured_value.toFixed(4)}</td>
+                <td class="p-2 text-center">${statusBadge}</td>
+            </tr>
+        `;
+    }).join('');
+
+    // 3. 버튼 디자인 강조 업데이트
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        if (btn.getAttribute('data-status') === currentGaugeFilter) {
+            btn.classList.add('ring-2', 'ring-blue-500', 'font-bold');
+        } else {
+            btn.classList.remove('ring-2', 'ring-blue-500', 'font-bold');
+        }
+    });
+}
 
 async function initApp() {
     try {

@@ -29,9 +29,8 @@ pub struct AppState {
     pub tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
     pub batch_size: Arc<Mutex<HashMap<u16, usize>>>,
     pub ui_cache: Arc<Mutex<HashMap<u16, MachineUiState>>>,
-    pub logger: Arc<HistoryLogger>,
+    pub logger: HistoryLogger,
     pub password: String,
-    pub log_path: String,
     pub font_size: u32,
 }
 
@@ -76,7 +75,9 @@ async fn get_offset_history(
     limit: u32,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<OffsetLog>, String> {
-    HistoryLogger::get_history(state.log_path.clone(), machine_id, tool_num, limit)
+    state
+        .logger
+        .get_offset_history(machine_id, tool_num, limit)
         .await
         .map_err(|e| e.to_string())
 }
@@ -86,10 +87,11 @@ async fn get_latest_offset_log(
     machine_id: u16,
     tool_num: i16,
     state: tauri::State<'_, AppState>,
-) -> Result<Option<OffsetLog>, String> {
-    HistoryLogger::get_latest_log(state.log_path.clone(), machine_id, tool_num)
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<OffsetLog, String> {
+    state
+        .logger
+        .get_latest_offset(machine_id, tool_num)
+        .ok_or("Failed to get latest offset log".to_string())
 }
 
 #[tauri::command]
@@ -105,7 +107,7 @@ pub async fn update_ui_cache(
     handle_table: Arc<HashMap<u16, FocasClient>>,
     tool_data: Arc<Mutex<HashMap<u16, (ToolData, ToolData)>>>,
     batch_size: Arc<Mutex<HashMap<u16, usize>>>,
-    log_path: String,
+    logger: HistoryLogger,
 ) {
     loop {
         let (keys, tool_data_map, batch_size_map) = {
@@ -123,18 +125,12 @@ pub async fn update_ui_cache(
             if let Some((upper, lower)) = tool_data_map.get(&id) {
                 let batch_size = batch_size_map.get(&id).cloned().unwrap_or(5);
 
-                let upper_offset_prev =
-                    HistoryLogger::get_latest_log(log_path.clone(), id, upper.tool_num)
-                        .await
-                        .map_err(|e| e.to_string())
-                        .unwrap_or(None)
-                        .map_or(0.0, |log| log.new_value as f64 / 1000.0);
-                let lower_offset_prev =
-                    HistoryLogger::get_latest_log(log_path.clone(), id, lower.tool_num)
-                        .await
-                        .map_err(|e| e.to_string())
-                        .unwrap_or(None)
-                        .map_or(0.0, |log| log.new_value as f64 / 1000.0);
+                let upper_offset_prev = logger
+                    .get_latest_offset(id, upper.tool_num)
+                    .map_or(0.0, |log| log.new_value as f64 / 1000.0);
+                let lower_offset_prev = logger
+                    .get_latest_offset(id, lower.tool_num)
+                    .map_or(0.0, |log| log.new_value as f64 / 1000.0);
 
                 let client = handle_table
                     .get(&id)
@@ -143,30 +139,62 @@ pub async fn update_ui_cache(
                 let upper_offset = client
                     .rdtofs(upper.tool_num, 0)
                     .map(|o| o.data as f64 / 1000.0)
-                    .unwrap_or(0.0);
+                    .unwrap_or_else(|e| {
+                        eprintln!(
+                            "Failed to read offset for machine_id={}, tool_num={} - {}",
+                            id, upper.tool_num, e
+                        );
+                        -1.0
+                    });
                 let lower_offset = client
                     .rdtofs(lower.tool_num, 0)
                     .map(|o| o.data as f64 / 1000.0)
-                    .unwrap_or(0.0);
-                let upper_life = if let Ok(life) = client.rdlife(upper.tool_num) {
-                    life.data
-                } else {
-                    -1
+                    .unwrap_or_else(|e| {
+                        eprintln!(
+                            "Failed to read offset for machine_id={}, tool_num={} - {}",
+                            id, upper.tool_num, e
+                        );
+                        -1.0
+                    });
+                let upper_life = match client.rdlife(upper.tool_num) {
+                    Ok(life) => life.data,
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to read life for machine_id={}, tool_num={} - {}",
+                            id, upper.tool_num, e
+                        );
+                        -1
+                    }
                 };
-                let lower_life = if let Ok(life) = client.rdlife(lower.tool_num) {
-                    life.data
-                } else {
-                    -1
+                let lower_life = match client.rdlife(lower.tool_num) {
+                    Ok(life) => life.data,
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to read life for machine_id={}, tool_num={} - {}",
+                            id, lower.tool_num, e
+                        );
+                        -1
+                    }
                 };
-                let upper_count = if let Ok(count) = client.rdcount(upper.tool_num) {
-                    count.data
-                } else {
-                    -1
+                let upper_count = match client.rdcount(upper.tool_num) {
+                    Ok(count) => count.data,
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to read count for machine_id={}, tool_num={} - {}",
+                            id, upper.tool_num, e
+                        );
+                        -1
+                    }
                 };
-                let lower_count = if let Ok(count) = client.rdcount(lower.tool_num) {
-                    count.data
-                } else {
-                    -1
+                let lower_count = match client.rdcount(lower.tool_num) {
+                    Ok(count) => count.data,
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to read count for machine_id={}, tool_num={} - {}",
+                            id, lower.tool_num, e
+                        );
+                        -1
+                    }
                 };
                 let upper_ui = ToolUiState {
                     data: upper.clone(),
@@ -210,14 +238,16 @@ async fn update_tool_settings(
         let mut tool_data_map = state.tool_data.lock().unwrap();
 
         if let Some((upper, lower)) = tool_data_map.get_mut(&machine_id) {
-            let target_tool = if is_upper { upper } else { lower };
-
             if let Some(v) = basic_size {
-                target_tool.basic_size = v;
+                upper.basic_size = v;
+                lower.basic_size = v;
             }
             if let Some(v) = manual_offset {
-                target_tool.manual_offset = v;
+                upper.manual_offset = v;
+                lower.manual_offset = v;
             }
+
+            let target_tool = if is_upper { upper } else { lower };
             if let Some(v) = offset_rate {
                 target_tool.offset_rate = v;
             }
@@ -267,6 +297,26 @@ async fn force_write_offset(
     offset_diff: i32,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    {
+        let tool_data_map = state.tool_data.lock().unwrap();
+        if let Some((upper, lower)) = tool_data_map.get(&machine_id) {
+            let target_tool = if upper.tool_num == tool_num {
+                upper
+            } else if lower.tool_num == tool_num {
+                lower
+            } else {
+                return Err("Tool number not found for the specified machine".to_string());
+            };
+
+            let diff_mm = offset_diff as f64 / 1000.0;
+            if diff_mm > target_tool.max_limit || diff_mm < target_tool.min_limit {
+                return Err(format!(
+                    "Offset difference out of allowed range ({:.3}mm to {:.3}mm)",
+                    target_tool.min_limit, target_tool.max_limit
+                ));
+            }
+        }
+    }
     write_offset_to_cnc(
         state.handle_table.clone(),
         state.logger.clone(),
@@ -323,9 +373,8 @@ pub fn run() {
             HEX_CMDS.set(hex_cmds).unwrap_or_else(|_| {
                 panic!("Failed to set HEX_CMDS from config. This should never happen since it's only set once.")
             });
-            let (gauge_tx, gauge_rx) = tokio::sync::broadcast::channel(100);
             let handle_table = Arc::new(handle_table);
-            let history_logger = Arc::new(HistoryLogger::new(&config.log_path));
+            let history_logger = HistoryLogger::new(&config.log_path);
             let ui_cache = Arc::new(Mutex::new(HashMap::new()));
             let app_state = AppState {
                 handle_table: handle_table.clone(),
@@ -333,7 +382,6 @@ pub fn run() {
                 batch_size: Arc::new(Mutex::new(config.mapping.batch_size)),
                 logger: history_logger.clone(),
                 password: config.admin.password.clone(),
-                log_path: config.log_path.clone(),
                 font_size: config.ui.font_size,
                 ui_cache: ui_cache.clone(),
             };
@@ -341,23 +389,22 @@ pub fn run() {
             let handle_table_clone = Arc::clone(&app_state.handle_table);
             let tool_data_clone = Arc::clone(&app_state.tool_data);
             let batch_size_clone = Arc::clone(&app_state.batch_size);
-            let log_path_clone = config.log_path.clone();
+            let logger_clone = history_logger.clone();
             tauri::async_runtime::spawn(async move {
                 update_ui_cache(
                     ui_cache_clone,
                     handle_table_clone,
                     tool_data_clone,
                     batch_size_clone,
-                    log_path_clone,
+                    logger_clone,
                 ).await;
             });
             let handle_table_clone = Arc::clone(&app_state.handle_table);
             let tool_data_clone = Arc::clone(&app_state.tool_data);
             let batch_size_clone = Arc::clone(&app_state.batch_size);
-            let history_logger_clone = Arc::clone(&history_logger);
+            let history_logger_clone = history_logger.clone();
             tauri::async_runtime::spawn(async move {
                 match spawn_cnc_loop(
-                    gauge_rx,
                     handle_table_clone,
                     tool_data_clone,
                     batch_size_clone,
@@ -370,16 +417,17 @@ pub fn run() {
 
             let handle_table_clone = Arc::clone(&app_state.handle_table);
             let tool_data_clone = Arc::clone(&app_state.tool_data);
-            let history_logger_clone = Arc::clone(&history_logger);
+            let history_logger_clone = history_logger.clone();
             tauri::async_runtime::spawn(async move {
                 update_offset_logs(history_logger_clone, handle_table_clone, tool_data_clone).await;
             });
 
+            let history_logger_clone = history_logger.clone();
             tauri::async_runtime::spawn(async move {
                 match spawn_gauge_stream(
                     &config.gauge.ip,
                     config.gauge.port,
-                    gauge_tx,
+                    history_logger_clone,
                 ) {
                     Ok(_) => println!("Gauge stream exited gracefully"),
                     Err(e) => eprintln!("Gauge stream encountered an error: {}", e),

@@ -3,16 +3,13 @@ use std::time::Duration;
 use bytes::BytesMut;
 use tokio::{
     net::TcpStream,
-    sync::{
-        broadcast::Sender,
-        mpsc::{self, UnboundedSender},
-    },
+    sync::mpsc::{self, UnboundedSender},
 };
 
 use futures::{stream::SplitStream, SinkExt, StreamExt};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use crate::HEX_CMDS;
+use crate::{logger::HistoryLogger, HEX_CMDS};
 
 #[derive(Debug, Clone)]
 pub enum HexCommand {
@@ -21,11 +18,7 @@ pub enum HexCommand {
     Write,  // D6100=1 (리셋 요청)
 }
 
-pub fn spawn_gauge_stream(
-    ip: &str,
-    port: u16,
-    channel: Sender<GaugeResponse>,
-) -> anyhow::Result<()> {
+pub fn spawn_gauge_stream(ip: &str, port: u16, logger: HistoryLogger) -> anyhow::Result<()> {
     if ip == "127.0.0.1" {
         println!("Spawning dummy gauge server for testing...");
         tokio::spawn(async move {
@@ -48,7 +41,7 @@ pub fn spawn_gauge_stream(
             };
 
             let (mut sink, stream) = Framed::new(tcp_stream, McProtocolCodec).split();
-            let channel_clone = channel.clone();
+            let logger_clone = logger.clone();
             let (write_tx, mut write_rx) = mpsc::unbounded_channel::<HexCommand>();
 
             tokio::select! {
@@ -90,7 +83,7 @@ pub fn spawn_gauge_stream(
                     eprintln!("Sink task ended for {}", addr);
                 }
                 _ = async move {
-                    gauge_get_response(channel_clone, stream, write_tx).await;
+                    gauge_get_response(logger_clone, stream, write_tx).await;
                 } => {
                     eprintln!("Stream task ended for {}", addr);
                 }
@@ -107,7 +100,7 @@ pub fn spawn_gauge_stream(
 }
 
 pub async fn gauge_get_response(
-    channel: Sender<GaugeResponse>,
+    logger: HistoryLogger,
     stream: SplitStream<Framed<TcpStream, McProtocolCodec>>,
     sink: UnboundedSender<HexCommand>,
 ) {
@@ -122,23 +115,21 @@ pub async fn gauge_get_response(
             }
         })
         .fold(
-            (channel, sink, false),
-            |(ch, sink, mut last_plc_on), response| async move {
+            (logger, sink, false),
+            |(logger, sink, mut last_plc_on), response| async move {
+                let response_plc_on = response.plc_data_on;
                 if response.plc_data_on && !last_plc_on {
                     println!(
                         "Measurement complete for line {}: raw = {}, data1: {} data2: {}",
                         response.active_line, response.raw_data, response.value1, response.value2
                     );
-                    if let Err(e) = ch.send(response.clone()) {
-                        eprintln!("Failed to send gauge response to channel: {}", e);
-                    }
-                    // D6100=1: 측정 데이터 리셋 요청 (폴링루프가 Write0을 자동으로 처리)
+                    logger.insert_gauge_response(response);
                     sink.send(HexCommand::Write).unwrap_or_else(|e| {
                         eprintln!("Failed to send write command: {}", e);
                     });
                 }
-                last_plc_on = response.plc_data_on;
-                (ch, sink, last_plc_on)
+                last_plc_on = response_plc_on;
+                (logger, sink, last_plc_on)
             },
         )
         .await;

@@ -64,6 +64,8 @@ impl Default for AppConfig {
                         active: false,
                         avg_gauge: None,
                         final_offset: None,
+                        max_limit: 0.01,
+                        min_limit: -0.01,
                     },
                     ToolData {
                         machine_id: 0,
@@ -74,6 +76,8 @@ impl Default for AppConfig {
                         active: false,
                         avg_gauge: None,
                         final_offset: None,
+                        max_limit: 0.01,
+                        min_limit: -0.01,
                     },
                 ),
             ),
@@ -89,6 +93,8 @@ impl Default for AppConfig {
                         active: false,
                         avg_gauge: None,
                         final_offset: None,
+                        max_limit: 0.01,
+                        min_limit: -0.01,
                     },
                     ToolData {
                         machine_id: 1,
@@ -99,6 +105,8 @@ impl Default for AppConfig {
                         active: false,
                         avg_gauge: None,
                         final_offset: None,
+                        max_limit: 0.01,
+                        min_limit: -0.01,
                     },
                 ),
             ),
@@ -114,6 +122,8 @@ impl Default for AppConfig {
                         active: false,
                         avg_gauge: None,
                         final_offset: None,
+                        max_limit: 0.01,
+                        min_limit: -0.01,
                     },
                     ToolData {
                         machine_id: 2,
@@ -124,6 +134,8 @@ impl Default for AppConfig {
                         active: false,
                         avg_gauge: None,
                         final_offset: None,
+                        max_limit: 0.01,
+                        min_limit: -0.01,
                     },
                 ),
             ),
@@ -131,8 +143,8 @@ impl Default for AppConfig {
         let batch_size = HashMap::from([(0, 5), (1, 5), (2, 5)]);
         Self {
             gauge: GaugeConfig {
-                ip: "127.0.0.1".to_string(),
-                port: 5002,
+                ip: "192.168.0.121".to_string(),
+                port: 3500,
                 read_req_hex: "500000FFFF03000C00100001040000701700A81600".to_string(),
                 write_req_hex_0: "500000FFFF03000E00200001140000D41700A801000000".to_string(), // D6100=0
                 write_req_hex: "500000FFFF03000E00200001140000D41700A801000100".to_string(), // D6100=1
@@ -141,19 +153,19 @@ impl Default for AppConfig {
                 MachineConfig {
                     id: 0,
                     name: "Lathe #1 (OP-10)".to_string(),
-                    ip: "dummy".to_string(),
+                    ip: "192.168.0.145".to_string(),
                     port: 8193,
                 },
                 MachineConfig {
                     id: 1,
                     name: "Lathe #1 (OP-10)".to_string(),
-                    ip: "dummy".to_string(),
+                    ip: "192.168.0.146".to_string(),
                     port: 8193,
                 },
                 MachineConfig {
                     id: 2,
                     name: "Lathe #2 (OP-20)".to_string(),
-                    ip: "dummy".to_string(),
+                    ip: "192.168.0.147".to_string(),
                     port: 8193,
                 },
             ],
@@ -165,7 +177,7 @@ impl Default for AppConfig {
                 password: "admin123".to_string(),
             },
             log_path: "logs/log.db".to_string(),
-            ui: UiConfig { font_size: 16 },
+            ui: UiConfig { font_size: 26 },
         }
     }
 }
