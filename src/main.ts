@@ -237,9 +237,9 @@ function renderTable() {
     bodyHtml += `</tr>`;
     
     // 현재 옵셋
-    bodyHtml += `<tr class="bg-[#FFC000] h-10"><td class="bg-[#00B0F0] text-white font-bold border border-white">직접 입</td>`;
+    bodyHtml += `<tr class="bg-[#FFC000] h-10"><td class="bg-[#00B0F0] text-white font-bold border border-white">직접 입력</td>`;
     machines.forEach(m => {
-        bodyHtml += `<td class="border border-gray-400 p-0">력
+        bodyHtml += `<td class="border border-gray-400 p-0">
             <div class="grid grid-cols-2 h-full text-xs">
                 <div class="flex items-center justify-center bg-[#00B050] text-white font-bold cursor-pointer hover:bg-green-600 m-1 rounded shadow transition"
                      data-action="write-offset" data-id="${m.machine_id}" data-tool="${m.upper_tool.tool_num}" data-title="황삭 옵셋 쓰기">
@@ -473,8 +473,8 @@ document.getElementById('btn-edit-save')!.addEventListener('click', async (e) =>
             const offsetDiff = Math.round(inputVal); // 소수점이 아니라 정수 형태의 단위(예: 10, -5)를 그대로 넘긴다고 가정
             await invoke('force_write_offset', {
                 machineId: editContext.machineId,
-                toolNum: editContext.toolNum * 1000,
-                offsetDiff: offsetDiff
+                toolNum: editContext.toolNum,
+                offsetDiff: offsetDiff * 1000
             });
         } else {
             const finalVal = editContext.field === 'offset_rate' ? inputVal / 100.0 : inputVal;
