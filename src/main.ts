@@ -470,11 +470,11 @@ document.getElementById('btn-edit-save')!.addEventListener('click', async (e) =>
             await invoke('update_batch_size', { machineId: editContext.machineId, newSize: Math.floor(inputVal) });
         } else if (editContext.field === 'write_offset') {
             // 추가된 부분: 바로쓰기 로직
-            const offsetDiff = Math.round(inputVal); // 소수점이 아니라 정수 형태의 단위(예: 10, -5)를 그대로 넘긴다고 가정
+            const offsetDiff = Math.round(inputVal * 1000); // 소수점이 아니라 정수 형태의 단위(예: 10, -5)를 그대로 넘긴다고 가정
             await invoke('force_write_offset', {
                 machineId: editContext.machineId,
                 toolNum: editContext.toolNum,
-                offsetDiff: offsetDiff * 1000
+                offsetDiff: offsetDiff
             });
         } else {
             const finalVal = editContext.field === 'offset_rate' ? inputVal / 100.0 : inputVal;
