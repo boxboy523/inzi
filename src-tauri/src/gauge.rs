@@ -40,6 +40,17 @@ pub fn spawn_gauge_stream(ip: &str, port: u16, logger: HistoryLogger) -> anyhow:
                 }
             };
 
+            #[cfg(debug_assertions)]
+            {
+                let cmds = HEX_CMDS.get().unwrap();
+                println!(
+                    "[Gauge DEBUG] configured commands: READ={} ACK1={} ACK0={}",
+                    hex::encode(&cmds.read_req_hex),
+                    hex::encode(&cmds.write_req_hex),
+                    hex::encode(&cmds.write_req_hex_0)
+                );
+            }
+
             let (mut sink, stream) = Framed::new(tcp_stream, McProtocolCodec).split();
             let logger_clone = logger.clone();
             let (write_tx, mut write_rx) = mpsc::unbounded_channel::<HexCommand>();
@@ -47,11 +58,15 @@ pub fn spawn_gauge_stream(ip: &str, port: u16, logger: HistoryLogger) -> anyhow:
             tokio::select! {
                 _ = async move {
                     let cmds = HEX_CMDS.get().unwrap();
+                    let mut read_count = 0u64;
                     loop {
                         // Write 요청이 있으면 우선 처리
                         while let Ok(cmd) = write_rx.try_recv() {
                             match cmd {
                                 HexCommand::Write => {
+                                    #[cfg(debug_assertions)]
+                                    println!("[Gauge TX] ACK: D6100=1 then D6100=0");
+
                                     // D6100=1 전송
                                     if let Err(e) = sink.send(cmds.write_req_hex.as_slice()).await {
                                         eprintln!("Write1 send error: {}. Stopping sink task.", e);
@@ -64,6 +79,9 @@ pub fn spawn_gauge_stream(ip: &str, port: u16, logger: HistoryLogger) -> anyhow:
                                     }
                                 }
                                 HexCommand::Write0 => {
+                                    #[cfg(debug_assertions)]
+                                    println!("[Gauge TX] ACK reset: D6100=0");
+
                                     if let Err(e) = sink.send(cmds.write_req_hex_0.as_slice()).await {
                                         eprintln!("Write0 send error: {}. Stopping sink task.", e);
                                         return;
@@ -73,6 +91,15 @@ pub fn spawn_gauge_stream(ip: &str, port: u16, logger: HistoryLogger) -> anyhow:
                             }
                         }
                         // Read 요청 송신
+                        read_count += 1;
+                        #[cfg(debug_assertions)]
+                        if read_count == 1 || read_count % 25 == 0 {
+                            println!(
+                                "[Gauge TX] READ request #{} (D6000~D6021)",
+                                read_count
+                            );
+                        }
+
                         if let Err(e) = sink.send(cmds.read_req_hex.as_slice()).await {
                             eprintln!("Read send error: {}. Stopping sink task.", e);
                             return;
@@ -147,8 +174,57 @@ pub struct GaugeResponse {
 const PLC_MEASUREMENT_COMPLETE: u16 = 2;
 const PLC_RESPONSE_MIN_LEN: usize = 55; // 9 header + 2 end_code + 44 data (D6000~D6021)
 
+#[cfg(debug_assertions)]
+fn debug_dump_response(bytes: &[u8]) {
+    let mc_length = if bytes.len() >= 9 {
+        Some(u16::from_le_bytes([bytes[7], bytes[8]]))
+    } else {
+        None
+    };
+    let end_code = if bytes.len() >= 11 {
+        Some(u16::from_le_bytes([bytes[9], bytes[10]]))
+    } else {
+        None
+    };
+
+    println!(
+        "[Gauge RX] packet_len={} mc_length={:?} end_code={:?} raw={}",
+        bytes.len(),
+        mc_length,
+        end_code.map(|v| format!("0x{:04X}", v)),
+        hex::encode(bytes)
+    );
+
+    if bytes.len() >= 15 {
+        let active_line = u16::from_le_bytes([bytes[11], bytes[12]]);
+        let measurement_state = u16::from_le_bytes([bytes[13], bytes[14]]);
+        println!(
+            "[Gauge RX] D6000(active_line)={} D6001(measurement_state)={} complete_expected={}",
+            active_line, measurement_state, PLC_MEASUREMENT_COMPLETE
+        );
+    }
+
+    if bytes.len() >= PLC_RESPONSE_MIN_LEN {
+        let mut registers = Vec::with_capacity(22);
+        for offset in 0..22usize {
+            let base = 11 + offset * 2;
+            let value = u16::from_le_bytes([bytes[base], bytes[base + 1]]);
+            registers.push(format!("D{}={}", 6000 + offset, value));
+        }
+        println!("[Gauge RX] {}", registers.join(" "));
+    } else {
+        println!(
+            "[Gauge RX] response is shorter than expected: got {} bytes, need at least {}",
+            bytes.len(), PLC_RESPONSE_MIN_LEN
+        );
+    }
+}
+
 impl GaugeResponse {
     fn from_bytes(bytes: Vec<u8>) -> Option<Self> {
+        #[cfg(debug_assertions)]
+        debug_dump_response(&bytes);
+
         if bytes.len() < 11 {
             return None;
         }
@@ -167,19 +243,31 @@ impl GaugeResponse {
         let active_line = u16::from_le_bytes([bytes[11], bytes[12]]); // D6000
         let plc_data_on_raw = u16::from_le_bytes([bytes[13], bytes[14]]); // D6001
 
-        // D6010 = bytes[11 + 10*2] = bytes[31]
         // 2워드(4바이트)당 1측정값: 정수부(2바이트) + 소수부(2바이트)
         let parse_value = |base: usize| -> i32 {
             let integer = i16::from_le_bytes([bytes[base], bytes[base + 1]]);
             let fractional = i16::from_le_bytes([bytes[base + 2], bytes[base + 3]]);
             integer as i32 * 10000 + fractional as i32
         };
+
+        let value1 = parse_value(39); // D6014 + D6015
+        let value2 = parse_value(43); // D6016 + D6017
+
+        #[cfg(debug_assertions)]
+        println!(
+            "[Gauge PARSE] active_line={} complete={} value1(D6014/6015)={} value2(D6016/6017)={}",
+            active_line,
+            plc_data_on_raw == PLC_MEASUREMENT_COMPLETE,
+            value1,
+            value2
+        );
+
         Some(Self {
             active_line,
             raw_data: hex::encode(&bytes),
             plc_data_on: plc_data_on_raw == PLC_MEASUREMENT_COMPLETE,
-            value1: parse_value(39), // D6012
-            value2: parse_value(43), // D6013
+            value1,
+            value2,
         })
     }
 }
