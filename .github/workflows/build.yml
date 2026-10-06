@@ -1,4 +1,4 @@
-name: "Windouws Build"
+name: "Windows EXE Build"
 
 on:
   push:
@@ -6,9 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
- build-windows:
-    permissions:
-      contents: write
+  build-windows:
     runs-on: windows-latest
 
     steps:
@@ -37,27 +35,14 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Build Debug Version
-        run: pnpm tauri build --debug
+      - name: Build standalone EXE
+        run: pnpm tauri build --target i686-pc-windows-msvc --no-bundle
         env:
-          CI: true 
+          CI: true
 
-      - name: Upload Debug Artifact
+      - name: Upload standalone EXE
         uses: actions/upload-artifact@v4
         with:
-          name: cnc-gauge-debug-build
-          path: src-tauri/target/debug/bundle/msi/*.msi
-          if-no-files-found: warn
-
-      - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: v__VERSION__
-          releaseName: "CNC Gauge v__VERSION__"
-          releaseBody: "Factory Test Build from GitHub Actions"
-          releaseDraft: true
-          prerelease: false
-          allowUpdates: true
-          args: --target i686-pc-windows-msvc   
+          name: inzi-cnc-gauge-windows-x86
+          path: src-tauri/target/i686-pc-windows-msvc/release/inzi_cnc_gauge.exe
+          if-no-files-found: error
