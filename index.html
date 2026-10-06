@@ -12,6 +12,24 @@
       -webkit-appearance: none; 
       margin: 0; 
     }
+    #settings-button {
+      position: fixed;
+      right: 8px;
+      bottom: 8px;
+      width: 30px;
+      height: 30px;
+      border: 1px solid rgba(107, 114, 128, 0.35);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.72);
+      color: #6b7280;
+      font-size: 17px;
+      line-height: 28px;
+      text-align: center;
+      cursor: pointer;
+      opacity: 0.45;
+      z-index: 20;
+    }
+    #settings-button:hover { opacity: 0.9; }
   </style>
 </head>
 <body class="bg-gray-100 font-sans text-sm select-none h-screen w-screen flex flex-col">
@@ -24,6 +42,8 @@
         </tbody>
     </table>
   </div>
+
+  <button id="settings-button" type="button" title="설정 (Ctrl+,)" aria-label="설정">⚙</button>
 
   <div id="edit-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
     <div class="bg-white p-6 rounded shadow-xl w-96">
@@ -127,14 +147,20 @@
   <script type="module">
     import { invoke } from '@tauri-apps/api/core';
 
+    async function openSettings() {
+      try {
+        await invoke('open_settings_window');
+      } catch (error) {
+        console.error('설정 창 열기 실패:', error);
+      }
+    }
+
+    document.getElementById('settings-button').addEventListener('click', openSettings);
+
     window.addEventListener('keydown', async (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === ',') {
         event.preventDefault();
-        try {
-          await invoke('open_settings_window');
-        } catch (error) {
-          console.error('설정 창 열기 실패:', error);
-        }
+        await openSettings();
       }
     });
   </script>
