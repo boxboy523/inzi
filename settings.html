@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>INZI 설정</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #111827; background: #f3f4f6; }
+    body { margin: 0; padding: 18px; }
+    .panel { background: white; border: 1px solid #d1d5db; border-radius: 10px; padding: 16px; }
+    .row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+    label { font-weight: 700; }
+    select, button, textarea { font: inherit; }
+    select, button { padding: 8px 12px; }
+    textarea { width: 100%; min-height: 520px; box-sizing: border-box; resize: vertical; padding: 12px; font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.45; }
+    .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+    .hint { color: #6b7280; font-size: 13px; margin: 8px 0 12px; }
+    #status { min-height: 20px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <div class="row">
+      <label for="gauge-model">측정기 기종</label>
+      <select id="gauge-model">
+        <option value="4G700">4G700</option>
+        <option value="4G710">4G710</option>
+      </select>
+    </div>
+    <div class="hint">4G700은 D6014~D6017, 4G710은 D6018~D6021을 측정값으로 사용한다. 저장 후 프로그램 재시작 시 적용된다.</div>
+    <textarea id="config-json" spellcheck="false"></textarea>
+    <div id="status"></div>
+    <div class="actions">
+      <button id="reload" type="button">다시 불러오기</button>
+      <button id="save" type="button">저장</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { invoke } from '@tauri-apps/api/core';
+
+    const editor = document.getElementById('config-json');
+    const model = document.getElementById('gauge-model');
+    const status = document.getElementById('status');
+
+    function syncModelFromJson() {
+      try {
+        const data = JSON.parse(editor.value);
+        model.value = data?.gauge?.model === '4G710' ? '4G710' : '4G700';
+      } catch (_) {}
+    }
+
+    function syncJsonFromModel() {
+      try {
+        const data = JSON.parse(editor.value);
+        if (!data.gauge || typeof data.gauge !== 'object') data.gauge = {};
+        data.gauge.model = model.value;
+        editor.value = JSON.stringify(data, null, 2);
+        status.textContent = '';
+      } catch (e) {
+        status.textContent = `JSON 오류: ${e}`;
+      }
+    }
+
+    async function loadConfig() {
+      try {
+        editor.value = await invoke('get_config_json');
+        syncModelFromJson();
+        status.textContent = '설정을 불러왔다.';
+      } catch (e) {
+        status.textContent = `불러오기 실패: ${e}`;
+      }
+    }
+
+    model.addEventListener('change', syncJsonFromModel);
+    editor.addEventListener('input', syncModelFromJson);
+    document.getElementById('reload').addEventListener('click', loadConfig);
+    document.getElementById('save').addEventListener('click', async () => {
+      try {
+        JSON.parse(editor.value);
+        await invoke('save_config_json', { configJson: editor.value });
+        status.textContent = '저장 완료. 재시작 후 적용된다.';
+      } catch (e) {
+        status.textContent = `저장 실패: ${e}`;
+      }
+    });
+
+    loadConfig();
+  </script>
+</body>
+</html>
