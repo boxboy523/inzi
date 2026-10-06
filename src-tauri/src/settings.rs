@@ -1,19 +1,6 @@
 use std::fs;
 
-use tauri::{AppHandle, Manager};
-
 use crate::config::AppConfig;
-
-#[tauri::command]
-pub fn open_settings_window(app: AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window("settings")
-        .ok_or_else(|| "settings window not found".to_string())?;
-
-    window.show().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())?;
-    Ok(())
-}
 
 #[tauri::command]
 pub fn get_config_json() -> Result<String, String> {
