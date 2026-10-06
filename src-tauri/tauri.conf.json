@@ -17,16 +17,6 @@
         "title": "inzi_cnc_gauge",
         "width": 800,
         "height": 600
-      },
-      {
-        "label": "settings",
-        "title": "INZI 설정",
-        "url": "settings.html",
-        "width": 820,
-        "height": 760,
-        "minWidth": 640,
-        "minHeight": 520,
-        "visible": false
       }
     ],
     "security": {
