@@ -55,7 +55,7 @@ pub fn spawn_gauge_stream(
     logger: HistoryLogger,
 ) -> anyhow::Result<()> {
     let model = GaugeModel::from_config(model)?;
-    println!("Gauge model: {}", model.name());
+    println!("[Gauge] model={}", model.name());
 
     if ip == "127.0.0.1" {
         println!("Spawning dummy gauge server for testing...");
@@ -63,32 +63,21 @@ pub fn spawn_gauge_stream(
             spawn_dummy_gauge_server(port).await;
         });
     }
+
     let addr = format!("{}:{}", ip, port);
     tokio::spawn(async move {
         loop {
             let tcp_stream = match TcpStream::connect(&addr).await {
                 Ok(stream) => {
-                    println!("Successfully connected to gauge at {}", addr);
+                    println!("[Gauge] connected {}", addr);
                     stream
                 }
                 Err(e) => {
-                    eprintln!("Failed to connect to {}: {}. Retrying in 5s...", addr, e);
+                    eprintln!("[Gauge ERROR] connect {}: {}. retrying in 5s", addr, e);
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     continue;
                 }
             };
-
-            #[cfg(debug_assertions)]
-            {
-                let cmds = HEX_CMDS.get().unwrap();
-                println!(
-                    "[Gauge DEBUG] model={} configured commands: READ={} ACK1={} ACK0={}",
-                    model.name(),
-                    hex::encode(&cmds.read_req_hex),
-                    hex::encode(&cmds.write_req_hex),
-                    hex::encode(&cmds.write_req_hex_0)
-                );
-            }
 
             let (mut sink, stream) = Framed::new(tcp_stream, McProtocolCodec { model }).split();
             let logger_clone = logger.clone();
@@ -97,68 +86,49 @@ pub fn spawn_gauge_stream(
             tokio::select! {
                 _ = async move {
                     let cmds = HEX_CMDS.get().unwrap();
-                    let mut read_count = 0u64;
                     loop {
-                        // Write 요청이 있으면 우선 처리
                         while let Ok(cmd) = write_rx.try_recv() {
                             match cmd {
                                 HexCommand::Write => {
                                     #[cfg(debug_assertions)]
-                                    println!("[Gauge TX] ACK: D6100=1 then D6100=0");
+                                    println!("[Gauge] ACK D6100=1 -> 0");
 
-                                    // D6100=1 전송
                                     if let Err(e) = sink.send(cmds.write_req_hex.as_slice()).await {
-                                        eprintln!("Write1 send error: {}. Stopping sink task.", e);
+                                        eprintln!("[Gauge ERROR] ACK D6100=1 send: {}", e);
                                         return;
                                     }
-                                    // D6100=0 즉시 전송 (리셋 해제)
                                     if let Err(e) = sink.send(cmds.write_req_hex_0.as_slice()).await {
-                                        eprintln!("Write0 send error: {}. Stopping sink task.", e);
+                                        eprintln!("[Gauge ERROR] ACK D6100=0 send: {}", e);
                                         return;
                                     }
                                 }
                                 HexCommand::Write0 => {
-                                    #[cfg(debug_assertions)]
-                                    println!("[Gauge TX] ACK reset: D6100=0");
-
                                     if let Err(e) = sink.send(cmds.write_req_hex_0.as_slice()).await {
-                                        eprintln!("Write0 send error: {}. Stopping sink task.", e);
+                                        eprintln!("[Gauge ERROR] D6100=0 send: {}", e);
                                         return;
                                     }
                                 }
-                                _ => {}
+                                HexCommand::Read => {}
                             }
-                        }
-                        // Read 요청 송신
-                        read_count += 1;
-                        #[cfg(debug_assertions)]
-                        if read_count == 1 || read_count % 25 == 0 {
-                            println!(
-                                "[Gauge TX] READ request #{} (D6000~D6021)",
-                                read_count
-                            );
                         }
 
                         if let Err(e) = sink.send(cmds.read_req_hex.as_slice()).await {
-                            eprintln!("Read send error: {}. Stopping sink task.", e);
+                            eprintln!("[Gauge ERROR] read request send: {}", e);
                             return;
                         }
                         tokio::time::sleep(Duration::from_millis(200)).await;
                     }
                 } => {
-                    eprintln!("Sink task ended for {}", addr);
+                    eprintln!("[Gauge ERROR] sender stopped {}", addr);
                 }
                 _ = async move {
                     gauge_get_response(logger_clone, stream, write_tx).await;
                 } => {
-                    eprintln!("Stream task ended for {}", addr);
+                    eprintln!("[Gauge ERROR] receiver stopped {}", addr);
                 }
             }
 
-            println!(
-                "Disconnected from gauge at {}. Attempting to reconnect...",
-                addr
-            );
+            println!("[Gauge] disconnected {}. reconnecting in 5s", addr);
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
@@ -175,27 +145,49 @@ pub async fn gauge_get_response(
             match result {
                 Ok(response) => Some(response),
                 Err(e) => {
-                    eprintln!("Stream error: {}", e);
+                    eprintln!("[Gauge ERROR] stream: {}", e);
                     None
                 }
             }
         })
         .fold(
-            (logger, sink, false),
-            |(logger, sink, mut last_plc_on), response| async move {
-                let response_plc_on = response.plc_data_on;
-                if response.plc_data_on && !last_plc_on {
+            (logger, sink, None::<u16>),
+            |(logger, sink, last_state), response| async move {
+                #[cfg(debug_assertions)]
+                match last_state {
+                    Some(previous) if previous != response.measurement_state => {
+                        println!(
+                            "[Gauge] state {} -> {} line={}",
+                            previous, response.measurement_state, response.active_line
+                        );
+                    }
+                    None => {
+                        println!(
+                            "[Gauge] state={} line={}",
+                            response.measurement_state, response.active_line
+                        );
+                    }
+                    _ => {}
+                }
+
+                if response.measurement_state == PLC_MEASUREMENT_COMPLETE
+                    && last_state != Some(PLC_MEASUREMENT_COMPLETE)
+                {
                     println!(
-                        "Measurement complete for line {}: raw = {}, data1: {} data2: {}",
-                        response.active_line, response.raw_data, response.value1, response.value2
+                        "[Gauge] COMPLETE line={} value1={:.4} value2={:.4}",
+                        response.active_line,
+                        response.value1 as f64 / 10000.0,
+                        response.value2 as f64 / 10000.0
                     );
+
                     logger.insert_gauge_response(response);
                     sink.send(HexCommand::Write).unwrap_or_else(|e| {
-                        eprintln!("Failed to send write command: {}", e);
+                        eprintln!("[Gauge ERROR] queue ACK: {}", e);
                     });
                 }
-                last_plc_on = response_plc_on;
-                (logger, sink, last_plc_on)
+
+                let current_state = response.measurement_state;
+                (logger, sink, Some(current_state))
             },
         )
         .await;
@@ -206,6 +198,7 @@ pub struct GaugeResponse {
     pub active_line: u16,
     pub raw_data: String,
     pub plc_data_on: bool,
+    pub measurement_state: u16,
     pub value1: i32,
     pub value2: i32,
 }
@@ -213,104 +206,45 @@ pub struct GaugeResponse {
 const PLC_MEASUREMENT_COMPLETE: u16 = 2;
 const PLC_RESPONSE_MIN_LEN: usize = 55; // 9 header + 2 end_code + 44 data (D6000~D6021)
 
-#[cfg(debug_assertions)]
-fn debug_dump_response(bytes: &[u8]) {
-    let mc_length = if bytes.len() >= 9 {
-        Some(u16::from_le_bytes([bytes[7], bytes[8]]))
-    } else {
-        None
-    };
-    let end_code = if bytes.len() >= 11 {
-        Some(u16::from_le_bytes([bytes[9], bytes[10]]))
-    } else {
-        None
-    };
-
-    println!(
-        "[Gauge RX] packet_len={} mc_length={:?} end_code={:?} raw={}",
-        bytes.len(),
-        mc_length,
-        end_code.map(|v| format!("0x{:04X}", v)),
-        hex::encode(bytes)
-    );
-
-    if bytes.len() >= 15 {
-        let active_line = u16::from_le_bytes([bytes[11], bytes[12]]);
-        let measurement_state = u16::from_le_bytes([bytes[13], bytes[14]]);
-        println!(
-            "[Gauge RX] D6000(active_line)={} D6001(measurement_state)={} complete_expected={}",
-            active_line, measurement_state, PLC_MEASUREMENT_COMPLETE
-        );
-    }
-
-    if bytes.len() >= PLC_RESPONSE_MIN_LEN {
-        let mut registers = Vec::with_capacity(22);
-        for offset in 0..22usize {
-            let base = 11 + offset * 2;
-            let value = u16::from_le_bytes([bytes[base], bytes[base + 1]]);
-            registers.push(format!("D{}={}", 6000 + offset, value));
-        }
-        println!("[Gauge RX] {}", registers.join(" "));
-    } else {
-        println!(
-            "[Gauge RX] response is shorter than expected: got {} bytes, need at least {}",
-            bytes.len(), PLC_RESPONSE_MIN_LEN
-        );
-    }
-}
-
 impl GaugeResponse {
     fn from_bytes(bytes: Vec<u8>, model: GaugeModel) -> Option<Self> {
-        #[cfg(debug_assertions)]
-        debug_dump_response(&bytes);
-
         if bytes.len() < 11 {
+            eprintln!("[Gauge ERROR] short MC response: {} bytes", bytes.len());
             return None;
         }
 
         let end_code = u16::from_le_bytes([bytes[9], bytes[10]]);
         if end_code != 0 {
-            eprintln!("PLC Error Code Received: {:04X}", end_code);
+            eprintln!("[Gauge ERROR] PLC end code: 0x{:04X}", end_code);
             return None;
         }
 
-        // D6021까지 필요: bytes[11 + 21*2 + 1] = bytes[54]
         if bytes.len() < PLC_RESPONSE_MIN_LEN {
+            eprintln!(
+                "[Gauge ERROR] short data response: {} bytes, expected at least {}",
+                bytes.len(), PLC_RESPONSE_MIN_LEN
+            );
             return None;
         }
 
         let active_line = u16::from_le_bytes([bytes[11], bytes[12]]); // D6000
-        let plc_data_on_raw = u16::from_le_bytes([bytes[13], bytes[14]]); // D6001
+        let measurement_state = u16::from_le_bytes([bytes[13], bytes[14]]); // D6001
 
-        // 2워드(4바이트)당 1측정값: 정수부(2바이트) + 소수부(2바이트)
         let parse_value = |base: usize| -> i32 {
             let integer = i16::from_le_bytes([bytes[base], bytes[base + 1]]);
             let fractional = i16::from_le_bytes([bytes[base + 2], bytes[base + 3]]);
             integer as i32 * 10000 + fractional as i32
         };
 
-        let (value1_base, value2_base, value1_register, value2_register) = model.value_registers();
+        let (value1_base, value2_base, _, _) = model.value_registers();
         let value1 = parse_value(value1_base);
         let value2 = parse_value(value2_base);
-
-        #[cfg(debug_assertions)]
-        println!(
-            "[Gauge PARSE] model={} active_line={} complete={} value1(D{}/D{})={} value2(D{}/D{})={}",
-            model.name(),
-            active_line,
-            plc_data_on_raw == PLC_MEASUREMENT_COMPLETE,
-            value1_register,
-            value1_register + 1,
-            value1,
-            value2_register,
-            value2_register + 1,
-            value2
-        );
 
         Some(Self {
             active_line,
             raw_data: hex::encode(&bytes),
-            plc_data_on: plc_data_on_raw == PLC_MEASUREMENT_COMPLETE,
+            plc_data_on: measurement_state == PLC_MEASUREMENT_COMPLETE,
+            measurement_state,
             value1,
             value2,
         })
@@ -363,23 +297,17 @@ pub async fn spawn_dummy_gauge_server(port: u16) {
 
                     loop {
                         use tokio::io::AsyncWriteExt;
-                        // 55 bytes: 9 header + 2 end_code + 44 data (22 words)
                         let mut resp = vec![0u8; PLC_RESPONSE_MIN_LEN];
 
                         resp[0..7].copy_from_slice(&[0xD0, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00]);
-                        // length = 2 (end_code) + 44 (22 words) = 46 = 0x2E
                         resp[7..9].copy_from_slice(&[0x2E, 0x00]);
                         resp[9..11].copy_from_slice(&[0x00, 0x00]);
 
                         toggle_on = if toggle_on == 0 { 2 } else { 0 };
 
-                        // D6000: active_line (machine_id 1~3)
                         resp[11..13].copy_from_slice(&machine_id.to_le_bytes());
-
-                        // D6001: PlcDataOn (toggle: 2=측정완료, 0=알수없음)
                         resp[13..15].copy_from_slice(&toggle_on.to_le_bytes());
 
-                        // 가짜 측정 데이터
                         let ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
@@ -387,17 +315,16 @@ pub async fn spawn_dummy_gauge_server(port: u16) {
                         let frac = (ms % 100) as i16 - 50;
                         let int_val = 48i16;
 
-                        // 라인1: D6010-D6013 (bytes[31..39])
                         resp[31..33].copy_from_slice(&int_val.to_le_bytes());
                         resp[33..35].copy_from_slice(&frac.to_le_bytes());
                         resp[35..37].copy_from_slice(&int_val.to_le_bytes());
                         resp[37..39].copy_from_slice(&frac.to_le_bytes());
-                        // 4G700: D6014-D6017 (bytes[39..47])
+
                         resp[39..41].copy_from_slice(&int_val.to_le_bytes());
                         resp[41..43].copy_from_slice(&frac.to_le_bytes());
                         resp[43..45].copy_from_slice(&int_val.to_le_bytes());
                         resp[45..47].copy_from_slice(&frac.to_le_bytes());
-                        // 4G710: D6018-D6021 (bytes[47..55])
+
                         resp[47..49].copy_from_slice(&int_val.to_le_bytes());
                         resp[49..51].copy_from_slice(&frac.to_le_bytes());
                         resp[51..53].copy_from_slice(&int_val.to_le_bytes());
@@ -440,15 +367,11 @@ mod tests {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = [0; 1024];
             let _ = socket.read(&mut buf).await.unwrap();
-            // 55 bytes: 9 header + 2 end_code + 44 data (22 words D6000~D6021)
             let mut mock_response = vec![0u8; PLC_RESPONSE_MIN_LEN];
-            // length field = 55 - 9 = 46 = 0x2E
             mock_response[7] = 0x2E;
             mock_response[8] = 0;
-            // active_line = 1
             mock_response[11] = 1;
             mock_response[12] = 0;
-            // plc_data_on = 2 (측정완료)
             mock_response[13] = 2;
             mock_response[14] = 0;
             socket.write_all(&mock_response).await.unwrap();
