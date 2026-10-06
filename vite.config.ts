@@ -1,17 +1,18 @@
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
-import { resolve } from "path";
+import { fileURLToPath } from "url";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   build: {
     rollupOptions: {
       input: {
-        main: resolve(__dirname, "index.html"),
-        settings: resolve(__dirname, "settings.html"),
+        main: fileURLToPath(new URL("index.html", import.meta.url)),
+        settings: fileURLToPath(new URL("settings.html", import.meta.url)),
       },
     },
   },
