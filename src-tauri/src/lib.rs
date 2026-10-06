@@ -103,6 +103,17 @@ async fn get_all_machine_states(state: State<'_, AppState>) -> Result<Vec<Machin
     Ok(results)
 }
 
+#[tauri::command]
+async fn get_raw_gauge_logs(
+    machine_id: u16,
+    limit: u32,
+) -> Result<Vec<crate::logger::RawGaugeLog>, String> {
+    let config = AppConfig::load("config.json");
+    HistoryLogger::get_raw_gauge_logs(config.log_path, machine_id, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 pub async fn update_ui_cache(
     ui_cache: Arc<Mutex<HashMap<u16, MachineUiState>>>,
     handle_table: Arc<HashMap<u16, FocasClient>>,
@@ -466,11 +477,11 @@ pub fn run() {
             get_offset_history,
             get_latest_offset_log,
             get_all_machine_states,
+            get_raw_gauge_logs,
             update_tool_settings,
             update_batch_size,
             force_write_offset,
             get_font_size,
-            settings::open_settings_window,
             settings::get_config_json,
             settings::save_config_json,
         ])
