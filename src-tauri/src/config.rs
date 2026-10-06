@@ -33,8 +33,7 @@ pub struct GaugeConfig {
     pub port: u16,
     pub read_req_hex: String,
     pub write_req_hex_0: String, // D6100=0 (리셋 해제)
-    #[serde(alias = "write_req_hex_1")]
-    pub write_req_hex: String, // D6100=1 (리셋 요청)
+    pub write_req_hex: String,   // D6100=1 (리셋 요청)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
