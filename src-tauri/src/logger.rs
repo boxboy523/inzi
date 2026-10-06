@@ -284,7 +284,7 @@ impl HistoryLogger {
 
             let mut result = Vec::new();
             for row in rows.flatten() {
-                result.push(row?);
+                result.push(row);
             }
             Ok(result)
         })
