@@ -35,14 +35,26 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Build standalone EXE
+      - name: Build release EXE
         run: pnpm tauri build --target i686-pc-windows-msvc --no-bundle
         env:
           CI: true
 
-      - name: Upload standalone EXE
+      - name: Upload release EXE
         uses: actions/upload-artifact@v4
         with:
-          name: inzi-cnc-gauge-windows-x86
+          name: inzi-cnc-gauge-windows-x86-release
           path: src-tauri/target/i686-pc-windows-msvc/release/inzi_cnc_gauge.exe
+          if-no-files-found: error
+
+      - name: Build debug EXE
+        run: pnpm tauri build --debug --target i686-pc-windows-msvc --no-bundle
+        env:
+          CI: true
+
+      - name: Upload debug EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: inzi-cnc-gauge-windows-x86-debug
+          path: src-tauri/target/i686-pc-windows-msvc/debug/inzi_cnc_gauge.exe
           if-no-files-found: error
