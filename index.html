@@ -6,11 +6,10 @@
   <link rel="stylesheet" href="/src/style.css">
   <title>CNC HMI</title>
   <style>
-    /* 숫자 입력창 화살표 숨김 */
-    input[type=number]::-webkit-inner-spin-button, 
-    input[type=number]::-webkit-outer-spin-button { 
-      -webkit-appearance: none; 
-      margin: 0; 
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
     }
     #settings-button {
       position: fixed;
@@ -36,20 +35,40 @@
 
   <div class="flex-1 w-full h-full overflow-hidden border-gray-400">
     <table class="w-full h-full border-collapse bg-white text-center" id="main-table">
-      <thead id="table-head">
-        </thead>
-      <tbody id="table-body">
-        </tbody>
+      <thead id="table-head"></thead>
+      <tbody id="table-body"></tbody>
     </table>
   </div>
 
   <button id="settings-button" type="button" title="설정 (Ctrl+,)" aria-label="설정">⚙</button>
 
+  <div id="settings-modal" class="hidden fixed inset-0 bg-black/50 items-center justify-center z-[90]">
+    <div class="bg-white rounded shadow-2xl w-[760px] max-w-[92vw] max-h-[90vh] p-5 flex flex-col">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-bold">설정</h2>
+        <button id="btn-settings-close" class="text-gray-500 hover:text-black text-xl font-bold px-2">×</button>
+      </div>
+      <div class="flex items-center gap-3 mb-3">
+        <label for="gauge-model" class="font-bold">측정기 기종</label>
+        <select id="gauge-model" class="border rounded px-3 py-2 bg-white">
+          <option value="4G700">4G700</option>
+          <option value="4G710">4G710</option>
+        </select>
+        <span class="text-xs text-gray-500">저장 후 프로그램 재시작 시 적용</span>
+      </div>
+      <textarea id="config-json" spellcheck="false" class="w-full h-[430px] max-h-[58vh] resize-none border rounded p-3 font-mono text-xs select-text"></textarea>
+      <div id="settings-status" class="min-h-5 mt-2 text-xs text-gray-600"></div>
+      <div class="flex justify-end gap-2 mt-2">
+        <button id="btn-settings-reload" class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 font-bold">다시 불러오기</button>
+        <button id="btn-settings-save" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-bold">저장</button>
+      </div>
+    </div>
+  </div>
+
   <div id="edit-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
     <div class="bg-white p-6 rounded shadow-xl w-96">
       <h3 id="edit-title" class="text-lg font-bold mb-4">수정</h3>
       <input type="text" id="edit-input" readonly class="w-full border p-2 mb-4 text-right text-2xl font-mono bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500">
-
       <div class="grid grid-cols-3 gap-2 mb-4">
         <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">7</button>
         <button class="keypad-btn p-4 bg-gray-200 text-2xl font-bold rounded active:bg-gray-400">8</button>
@@ -66,7 +85,6 @@
         <button class="keypad-btn col-span-2 p-4 bg-red-100 text-red-600 text-xl font-bold rounded active:bg-red-200" data-key="clear">Clear</button>
         <button class="keypad-btn p-4 bg-gray-300 text-xl font-bold rounded active:bg-gray-400" data-key="backspace">←</button>
       </div>
-
       <div class="flex justify-end gap-2">
         <button id="btn-edit-cancel" class="px-6 py-3 bg-gray-300 rounded font-bold hover:bg-gray-400">취소</button>
         <button id="btn-edit-save" class="px-6 py-3 bg-blue-600 text-white rounded font-bold hover:bg-blue-700">저장</button>
@@ -84,15 +102,10 @@
         <table class="w-full text-xs text-center">
           <thead class="sticky top-0 bg-gray-200">
             <tr>
-              <th class="p-1">시간</th>
-              <th class="p-1">이전값</th>
-              <th class="p-1">변경량</th>
-              <th class="p-1">변경후</th>
-              <th class="p-1">성공</th>
+              <th class="p-1">시간</th><th class="p-1">이전값</th><th class="p-1">변경량</th><th class="p-1">변경후</th><th class="p-1">성공</th>
             </tr>
           </thead>
-          <tbody id="history-body">
-            </tbody>
+          <tbody id="history-body"></tbody>
         </table>
       </div>
     </div>
@@ -107,23 +120,16 @@
         <button class="filter-btn px-4 py-1 bg-yellow-200 text-yellow-800 rounded hover:bg-yellow-300 transition" data-status="1">사용중</button>
         <button class="filter-btn px-4 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition" data-status="2">사용됨</button>
       </div>
-
       <div class="overflow-y-auto flex-1 border border-gray-300 rounded">
         <table class="w-full text-sm text-left">
           <thead class="bg-gray-100 sticky top-0 shadow-sm">
             <tr>
-              <th class="p-2 border-b text-center">수신 시간</th>
-              <th class="p-2 border-b text-center">라인</th>
-              <th class="p-2 border-b text-center">구분</th>
-              <th class="p-2 border-b text-center">측정값</th>
-              <th class="p-2 border-b text-center">상태</th>
+              <th class="p-2 border-b text-center">수신 시간</th><th class="p-2 border-b text-center">라인</th><th class="p-2 border-b text-center">구분</th><th class="p-2 border-b text-center">측정값</th><th class="p-2 border-b text-center">상태</th>
             </tr>
           </thead>
-          <tbody id="raw-gauge-body">
-          </tbody>
+          <tbody id="raw-gauge-body"></tbody>
         </table>
       </div>
-
       <div class="flex justify-end mt-4">
         <button id="btn-raw-gauge-close" class="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 font-bold shadow">닫기</button>
       </div>
@@ -134,12 +140,8 @@
     <div class="bg-red-50 p-6 rounded-lg shadow-2xl border-4 border-red-600 w-[500px] text-center animate-pulse">
       <div class="text-red-600 text-6xl mb-4">⚠️</div>
       <h2 class="text-3xl font-bold text-red-700 mb-2">시스템 경고</h2>
-      <p id="error-message" class="text-xl text-gray-800 font-bold mb-6 break-words">
-        네트워크 연결이 끊어졌습니다.
-      </p>
-      <button id="btn-error-close" class="px-8 py-3 bg-red-600 text-white text-xl font-bold rounded hover:bg-red-700 shadow-lg">
-        확인
-      </button>
+      <p id="error-message" class="text-xl text-gray-800 font-bold mb-6 break-words">네트워크 연결이 끊어졌습니다.</p>
+      <button id="btn-error-close" class="px-8 py-3 bg-red-600 text-white text-xl font-bold rounded hover:bg-red-700 shadow-lg">확인</button>
     </div>
   </div>
 
@@ -147,20 +149,74 @@
   <script type="module">
     import { invoke } from '@tauri-apps/api/core';
 
-    async function openSettings() {
+    const settingsModal = document.getElementById('settings-modal');
+    const configEditor = document.getElementById('config-json');
+    const gaugeModel = document.getElementById('gauge-model');
+    const settingsStatus = document.getElementById('settings-status');
+
+    function syncModelFromJson() {
       try {
-        await invoke('open_settings_window');
-      } catch (error) {
-        console.error('설정 창 열기 실패:', error);
+        const data = JSON.parse(configEditor.value);
+        gaugeModel.value = data?.gauge?.model === '4G710' ? '4G710' : '4G700';
+      } catch (_) {}
+    }
+
+    function syncJsonFromModel() {
+      try {
+        const data = JSON.parse(configEditor.value);
+        if (!data.gauge || typeof data.gauge !== 'object') data.gauge = {};
+        data.gauge.model = gaugeModel.value;
+        configEditor.value = JSON.stringify(data, null, 2);
+        settingsStatus.textContent = '';
+      } catch (e) {
+        settingsStatus.textContent = `JSON 오류: ${e}`;
       }
     }
 
-    document.getElementById('settings-button').addEventListener('click', openSettings);
+    async function loadSettings() {
+      try {
+        configEditor.value = await invoke('get_config_json');
+        syncModelFromJson();
+        settingsStatus.textContent = '';
+      } catch (e) {
+        settingsStatus.textContent = `불러오기 실패: ${e}`;
+      }
+    }
 
+    async function openSettings() {
+      settingsModal.classList.remove('hidden');
+      settingsModal.classList.add('flex');
+      await loadSettings();
+    }
+
+    function closeSettings() {
+      settingsModal.classList.add('hidden');
+      settingsModal.classList.remove('flex');
+    }
+
+    document.getElementById('settings-button').addEventListener('click', openSettings);
+    document.getElementById('btn-settings-close').addEventListener('click', closeSettings);
+    document.getElementById('btn-settings-reload').addEventListener('click', loadSettings);
+    gaugeModel.addEventListener('change', syncJsonFromModel);
+    configEditor.addEventListener('input', syncModelFromJson);
+    document.getElementById('btn-settings-save').addEventListener('click', async () => {
+      try {
+        JSON.parse(configEditor.value);
+        await invoke('save_config_json', { configJson: configEditor.value });
+        settingsStatus.textContent = '저장 완료. 재시작 후 적용된다.';
+      } catch (e) {
+        settingsStatus.textContent = `저장 실패: ${e}`;
+      }
+    });
+    settingsModal.addEventListener('click', (event) => {
+      if (event.target === settingsModal) closeSettings();
+    });
     window.addEventListener('keydown', async (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === ',') {
         event.preventDefault();
         await openSettings();
+      } else if (event.key === 'Escape' && !settingsModal.classList.contains('hidden')) {
+        closeSettings();
       }
     });
   </script>
