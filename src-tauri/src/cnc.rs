@@ -86,7 +86,7 @@ impl GaugeBatches {
             let avg_point = if batches.len() > 4 {
                 let mut sorted = batches.clone();
                 sorted.sort_unstable();
-                let sum: f64 = sorted[2..sorted.len() - 2].iter().sum::<i32>() as f64;
+                let sum: f64 = sorted[1..sorted.len() - 1].iter().sum::<i32>() as f64;
                 sum / (sorted.len() - 2) as f64
             } else {
                 let sum: f64 = batches.iter().sum::<i32>() as f64;
