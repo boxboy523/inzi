@@ -55,7 +55,7 @@ impl HistoryLogger {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS gauge_raw_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                timestamp DATETIME DEFAULT (datetime('now', 'localtime')),
                 active_line INTEGER NOT NULL,  -- 1호기, 2호기... (사용자 표시용)
                 machine_id INTEGER NOT NULL,   -- 0, 1... (내부 로직용)
                 tool_type INTEGER NOT NULL,    -- 1: 황삭(Value1), 2: 정삭(Value2)
@@ -180,15 +180,15 @@ impl HistoryLogger {
 
                     // 1. 황삭 데이터 (Value 1) -> tool_type: 1
                     let _ = tx.execute(
-                        "INSERT INTO gauge_raw_logs (active_line, machine_id, tool_type, measured_value, is_used) 
-                         VALUES (?1, ?2, 1, ?3, 0)",
+                        "INSERT INTO gauge_raw_logs (timestamp, active_line, machine_id, tool_type, measured_value, is_used) 
+                         VALUES (datetime('now', 'localtime'), ?1, ?2, 1, ?3, 0)",
                         params![res.active_line, machine_id, res.value1],
                     );
 
                     // 2. 정삭 데이터 (Value 2) -> tool_type: 2
                     let _ = tx.execute(
-                        "INSERT INTO gauge_raw_logs (active_line, machine_id, tool_type, measured_value, is_used) 
-                         VALUES (?1, ?2, 2, ?3, 0)",
+                        "INSERT INTO gauge_raw_logs (timestamp, active_line, machine_id, tool_type, measured_value, is_used) 
+                         VALUES (datetime('now', 'localtime'), ?1, ?2, 2, ?3, 0)",
                         params![res.active_line, machine_id, res.value2],
                     );
 
@@ -208,7 +208,7 @@ impl HistoryLogger {
                 .prepare(
                     "SELECT id, measured_value FROM gauge_raw_logs 
                  WHERE machine_id = ?1 AND is_used = 0 
-                 ORDER BY timestamp ASC",
+                 ORDER BY id ASC",
                 )
                 .ok()?;
 
@@ -267,7 +267,7 @@ impl HistoryLogger {
                 "SELECT id, timestamp, active_line, tool_type, measured_value, is_used 
                  FROM gauge_raw_logs 
                  WHERE machine_id = ?1 
-                 ORDER BY timestamp DESC LIMIT ?2",
+                 ORDER BY id DESC LIMIT ?2",
             )?;
 
             let rows = stmt.query_map(params![machine_id, limit], |row| {
