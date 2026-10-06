@@ -21,13 +21,20 @@ pub struct UiConfig {
     pub font_size: u32,
 }
 
+fn default_gauge_model() -> String {
+    "4G700".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GaugeConfig {
+    #[serde(default = "default_gauge_model")]
+    pub model: String,
     pub ip: String,
     pub port: u16,
     pub read_req_hex: String,
     pub write_req_hex_0: String, // D6100=0 (리셋 해제)
-    pub write_req_hex: String,   // D6100=1 (리셋 요청)
+    #[serde(alias = "write_req_hex_1")]
+    pub write_req_hex: String, // D6100=1 (리셋 요청)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -143,6 +150,7 @@ impl Default for AppConfig {
         let batch_size = HashMap::from([(0, 5), (1, 5), (2, 5)]);
         Self {
             gauge: GaugeConfig {
+                model: default_gauge_model(),
                 ip: "192.168.0.121".to_string(),
                 port: 3500,
                 read_req_hex: "500000FFFF03000C00100001040000701700A81600".to_string(),
