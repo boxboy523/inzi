@@ -28,11 +28,7 @@ pub fn open_settings_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn get_config_json() -> Result<String, String> {
     match fs::read_to_string("config.json") {
-        Ok(content) => {
-            let config: AppConfig = serde_json::from_str(&content)
-                .map_err(|e| format!("config.json 파싱 실패: {}", e))?;
-            serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
-        }
+        Ok(content) => Ok(content),
         Err(_) => serde_json::to_string_pretty(&AppConfig::default()).map_err(|e| e.to_string()),
     }
 }
