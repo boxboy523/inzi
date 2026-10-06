@@ -214,7 +214,8 @@ impl HistoryLogger {
 
             let rows = stmt
                 .query_map(rusqlite::params![machine_id], |row| {
-                    Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?))
+                    let value = row.get::<_, f64>(1)?.round() as i32;
+                    Ok((row.get::<_, i32>(0)?, value))
                 })
                 .ok()?;
 
@@ -283,7 +284,7 @@ impl HistoryLogger {
 
             let mut result = Vec::new();
             for row in rows.flatten() {
-                result.push(row);
+                result.push(row?);
             }
             Ok(result)
         })
