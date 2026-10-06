@@ -528,7 +528,7 @@ function renderRawGaugeTable() {
                 <td class="p-2 text-center">${new Date(log.timestamp).toLocaleString()}</td>
                 <td class="p-2 text-center">${log.active_line}호기</td>
                 <td class="p-2 text-center"><span class="bg-blue-100 text-blue-800 px-1 rounded text-xs font-bold">${typeLabel}</span></td>
-                <td class="p-2 text-right font-mono text-lg pr-4">${log.measured_value.toFixed(4)}</td>
+                <td class="p-2 text-right font-mono text-lg pr-4">${(log.measured_value / 10000).toFixed(4)}</td>
                 <td class="p-2 text-center">${statusBadge}</td>
             </tr>
         `;
