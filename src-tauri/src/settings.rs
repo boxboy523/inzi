@@ -1,27 +1,17 @@
 use std::fs;
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager};
 
 use crate::config::AppConfig;
 
 #[tauri::command]
 pub fn open_settings_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("settings") {
-        window.set_focus().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
+    let window = app
+        .get_webview_window("settings")
+        .ok_or_else(|| "settings window not found".to_string())?;
 
-    WebviewWindowBuilder::new(
-        &app,
-        "settings",
-        WebviewUrl::App("settings.html".into()),
-    )
-    .title("INZI 설정")
-    .inner_size(820.0, 760.0)
-    .min_inner_size(640.0, 520.0)
-    .build()
-    .map_err(|e| e.to_string())?;
-
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
 }
 
