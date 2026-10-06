@@ -124,4 +124,19 @@
   </div>
 
   <script type="module" src="/src/main.ts"></script>
+  <script type="module">
+    import { invoke } from '@tauri-apps/api/core';
+
+    window.addEventListener('keydown', async (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === ',') {
+        event.preventDefault();
+        try {
+          await invoke('open_settings_window');
+        } catch (error) {
+          console.error('설정 창 열기 실패:', error);
+        }
+      }
+    });
+  </script>
 </body>
+</html>

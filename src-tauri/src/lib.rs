@@ -14,6 +14,7 @@ pub mod cnc;
 pub mod config;
 pub mod gauge;
 pub mod logger;
+pub mod settings;
 
 #[derive(Debug, Clone)]
 pub struct HexCommands {
@@ -333,6 +334,7 @@ async fn force_write_offset(
     );
     Ok(())
 }
+
 #[tauri::command]
 fn get_font_size(state: State<'_, AppState>) -> u32 {
     state.font_size
@@ -427,6 +429,7 @@ pub fn run() {
                 match spawn_gauge_stream(
                     &config.gauge.ip,
                     config.gauge.port,
+                    &config.gauge.model,
                     history_logger_clone,
                 ) {
                     Ok(_) => println!("Gauge stream exited gracefully"),
@@ -467,6 +470,9 @@ pub fn run() {
             update_batch_size,
             force_write_offset,
             get_font_size,
+            settings::open_settings_window,
+            settings::get_config_json,
+            settings::save_config_json,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

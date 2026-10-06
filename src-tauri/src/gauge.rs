@@ -11,6 +11,36 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use crate::{logger::HistoryLogger, HEX_CMDS};
 
+#[derive(Debug, Clone, Copy)]
+pub enum GaugeModel {
+    G4G700,
+    G4G710,
+}
+
+impl GaugeModel {
+    pub fn from_config(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "4G700" => Ok(Self::G4G700),
+            "4G710" => Ok(Self::G4G710),
+            other => anyhow::bail!("Unsupported gauge model: {}", other),
+        }
+    }
+
+    fn value_registers(self) -> (usize, usize, u16, u16) {
+        match self {
+            Self::G4G700 => (39, 43, 6014, 6016),
+            Self::G4G710 => (47, 51, 6018, 6020),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::G4G700 => "4G700",
+            Self::G4G710 => "4G710",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum HexCommand {
     Read,
@@ -18,7 +48,15 @@ pub enum HexCommand {
     Write,  // D6100=1 (리셋 요청)
 }
 
-pub fn spawn_gauge_stream(ip: &str, port: u16, logger: HistoryLogger) -> anyhow::Result<()> {
+pub fn spawn_gauge_stream(
+    ip: &str,
+    port: u16,
+    model: &str,
+    logger: HistoryLogger,
+) -> anyhow::Result<()> {
+    let model = GaugeModel::from_config(model)?;
+    println!("Gauge model: {}", model.name());
+
     if ip == "127.0.0.1" {
         println!("Spawning dummy gauge server for testing...");
         tokio::spawn(async move {
@@ -40,18 +78,34 @@ pub fn spawn_gauge_stream(ip: &str, port: u16, logger: HistoryLogger) -> anyhow:
                 }
             };
 
-            let (mut sink, stream) = Framed::new(tcp_stream, McProtocolCodec).split();
+            #[cfg(debug_assertions)]
+            {
+                let cmds = HEX_CMDS.get().unwrap();
+                println!(
+                    "[Gauge DEBUG] model={} configured commands: READ={} ACK1={} ACK0={}",
+                    model.name(),
+                    hex::encode(&cmds.read_req_hex),
+                    hex::encode(&cmds.write_req_hex),
+                    hex::encode(&cmds.write_req_hex_0)
+                );
+            }
+
+            let (mut sink, stream) = Framed::new(tcp_stream, McProtocolCodec { model }).split();
             let logger_clone = logger.clone();
             let (write_tx, mut write_rx) = mpsc::unbounded_channel::<HexCommand>();
 
             tokio::select! {
                 _ = async move {
                     let cmds = HEX_CMDS.get().unwrap();
+                    let mut read_count = 0u64;
                     loop {
                         // Write 요청이 있으면 우선 처리
                         while let Ok(cmd) = write_rx.try_recv() {
                             match cmd {
                                 HexCommand::Write => {
+                                    #[cfg(debug_assertions)]
+                                    println!("[Gauge TX] ACK: D6100=1 then D6100=0");
+
                                     // D6100=1 전송
                                     if let Err(e) = sink.send(cmds.write_req_hex.as_slice()).await {
                                         eprintln!("Write1 send error: {}. Stopping sink task.", e);
@@ -64,6 +118,9 @@ pub fn spawn_gauge_stream(ip: &str, port: u16, logger: HistoryLogger) -> anyhow:
                                     }
                                 }
                                 HexCommand::Write0 => {
+                                    #[cfg(debug_assertions)]
+                                    println!("[Gauge TX] ACK reset: D6100=0");
+
                                     if let Err(e) = sink.send(cmds.write_req_hex_0.as_slice()).await {
                                         eprintln!("Write0 send error: {}. Stopping sink task.", e);
                                         return;
@@ -73,6 +130,15 @@ pub fn spawn_gauge_stream(ip: &str, port: u16, logger: HistoryLogger) -> anyhow:
                             }
                         }
                         // Read 요청 송신
+                        read_count += 1;
+                        #[cfg(debug_assertions)]
+                        if read_count == 1 || read_count % 25 == 0 {
+                            println!(
+                                "[Gauge TX] READ request #{} (D6000~D6021)",
+                                read_count
+                            );
+                        }
+
                         if let Err(e) = sink.send(cmds.read_req_hex.as_slice()).await {
                             eprintln!("Read send error: {}. Stopping sink task.", e);
                             return;
@@ -147,8 +213,57 @@ pub struct GaugeResponse {
 const PLC_MEASUREMENT_COMPLETE: u16 = 2;
 const PLC_RESPONSE_MIN_LEN: usize = 55; // 9 header + 2 end_code + 44 data (D6000~D6021)
 
+#[cfg(debug_assertions)]
+fn debug_dump_response(bytes: &[u8]) {
+    let mc_length = if bytes.len() >= 9 {
+        Some(u16::from_le_bytes([bytes[7], bytes[8]]))
+    } else {
+        None
+    };
+    let end_code = if bytes.len() >= 11 {
+        Some(u16::from_le_bytes([bytes[9], bytes[10]]))
+    } else {
+        None
+    };
+
+    println!(
+        "[Gauge RX] packet_len={} mc_length={:?} end_code={:?} raw={}",
+        bytes.len(),
+        mc_length,
+        end_code.map(|v| format!("0x{:04X}", v)),
+        hex::encode(bytes)
+    );
+
+    if bytes.len() >= 15 {
+        let active_line = u16::from_le_bytes([bytes[11], bytes[12]]);
+        let measurement_state = u16::from_le_bytes([bytes[13], bytes[14]]);
+        println!(
+            "[Gauge RX] D6000(active_line)={} D6001(measurement_state)={} complete_expected={}",
+            active_line, measurement_state, PLC_MEASUREMENT_COMPLETE
+        );
+    }
+
+    if bytes.len() >= PLC_RESPONSE_MIN_LEN {
+        let mut registers = Vec::with_capacity(22);
+        for offset in 0..22usize {
+            let base = 11 + offset * 2;
+            let value = u16::from_le_bytes([bytes[base], bytes[base + 1]]);
+            registers.push(format!("D{}={}", 6000 + offset, value));
+        }
+        println!("[Gauge RX] {}", registers.join(" "));
+    } else {
+        println!(
+            "[Gauge RX] response is shorter than expected: got {} bytes, need at least {}",
+            bytes.len(), PLC_RESPONSE_MIN_LEN
+        );
+    }
+}
+
 impl GaugeResponse {
-    fn from_bytes(bytes: Vec<u8>) -> Option<Self> {
+    fn from_bytes(bytes: Vec<u8>, model: GaugeModel) -> Option<Self> {
+        #[cfg(debug_assertions)]
+        debug_dump_response(&bytes);
+
         if bytes.len() < 11 {
             return None;
         }
@@ -167,24 +282,44 @@ impl GaugeResponse {
         let active_line = u16::from_le_bytes([bytes[11], bytes[12]]); // D6000
         let plc_data_on_raw = u16::from_le_bytes([bytes[13], bytes[14]]); // D6001
 
-        // D6010 = bytes[11 + 10*2] = bytes[31]
         // 2워드(4바이트)당 1측정값: 정수부(2바이트) + 소수부(2바이트)
         let parse_value = |base: usize| -> i32 {
             let integer = i16::from_le_bytes([bytes[base], bytes[base + 1]]);
             let fractional = i16::from_le_bytes([bytes[base + 2], bytes[base + 3]]);
             integer as i32 * 10000 + fractional as i32
         };
+
+        let (value1_base, value2_base, value1_register, value2_register) = model.value_registers();
+        let value1 = parse_value(value1_base);
+        let value2 = parse_value(value2_base);
+
+        #[cfg(debug_assertions)]
+        println!(
+            "[Gauge PARSE] model={} active_line={} complete={} value1(D{}/D{})={} value2(D{}/D{})={}",
+            model.name(),
+            active_line,
+            plc_data_on_raw == PLC_MEASUREMENT_COMPLETE,
+            value1_register,
+            value1_register + 1,
+            value1,
+            value2_register,
+            value2_register + 1,
+            value2
+        );
+
         Some(Self {
             active_line,
             raw_data: hex::encode(&bytes),
             plc_data_on: plc_data_on_raw == PLC_MEASUREMENT_COMPLETE,
-            value1: parse_value(39), // D6012
-            value2: parse_value(43), // D6013
+            value1,
+            value2,
         })
     }
 }
 
-pub struct McProtocolCodec;
+pub struct McProtocolCodec {
+    model: GaugeModel,
+}
 
 impl Decoder for McProtocolCodec {
     type Item = GaugeResponse;
@@ -199,7 +334,7 @@ impl Decoder for McProtocolCodec {
             return Ok(None);
         }
         let data = src.split_to(length + 9).to_vec();
-        Ok(GaugeResponse::from_bytes(data))
+        Ok(GaugeResponse::from_bytes(data, self.model))
     }
 }
 
@@ -257,12 +392,12 @@ pub async fn spawn_dummy_gauge_server(port: u16) {
                         resp[33..35].copy_from_slice(&frac.to_le_bytes());
                         resp[35..37].copy_from_slice(&int_val.to_le_bytes());
                         resp[37..39].copy_from_slice(&frac.to_le_bytes());
-                        // 라인2: D6014-D6017 (bytes[39..47])
+                        // 4G700: D6014-D6017 (bytes[39..47])
                         resp[39..41].copy_from_slice(&int_val.to_le_bytes());
                         resp[41..43].copy_from_slice(&frac.to_le_bytes());
                         resp[43..45].copy_from_slice(&int_val.to_le_bytes());
                         resp[45..47].copy_from_slice(&frac.to_le_bytes());
-                        // 라인3: D6018-D6021 (bytes[47..55])
+                        // 4G710: D6018-D6021 (bytes[47..55])
                         resp[47..49].copy_from_slice(&int_val.to_le_bytes());
                         resp[49..51].copy_from_slice(&frac.to_le_bytes());
                         resp[51..53].copy_from_slice(&int_val.to_le_bytes());
@@ -316,14 +451,17 @@ mod tests {
             // plc_data_on = 2 (측정완료)
             mock_response[13] = 2;
             mock_response[14] = 0;
-            // line1 value1 integer part
-            mock_response[31] = 10;
-            mock_response[32] = 0;
             socket.write_all(&mock_response).await.unwrap();
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         });
         let (tx, _) = tokio::sync::broadcast::channel(100);
-        let handle_result = spawn_gauge_stream("127.0.0.1", port, tx);
+        let handle_result = spawn_gauge_stream("127.0.0.1", port, "4G700", tx);
         assert!(handle_result.is_ok(), "TCP 연결 또는 스트림 생성 실패");
+    }
+
+    #[test]
+    fn test_model_register_layouts() {
+        assert_eq!(GaugeModel::G4G700.value_registers(), (39, 43, 6014, 6016));
+        assert_eq!(GaugeModel::G4G710.value_registers(), (47, 51, 6018, 6020));
     }
 }
