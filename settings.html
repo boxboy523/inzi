@@ -36,9 +36,8 @@
     </div>
   </div>
 
-  <script type="module">
-    import { invoke } from '@tauri-apps/api/core';
-
+  <script>
+    const invoke = window.__TAURI__.core.invoke;
     const editor = document.getElementById('config-json');
     const model = document.getElementById('gauge-model');
     const status = document.getElementById('status');
