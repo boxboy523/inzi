@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
 
 use anyhow::anyhow;
-use focas_rs::FocasClient;
+use crate::focas::FocasClient;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 
@@ -86,8 +86,8 @@ impl GaugeBatches {
             let avg_point = if batches.len() > 4 {
                 let mut sorted = batches.clone();
                 sorted.sort_unstable();
-                let sum: f64 = sorted[1..sorted.len() - 1].iter().sum::<i32>() as f64;
-                sum / (sorted.len() - 2) as f64
+                let sum: f64 = sorted[2..sorted.len() - 2].iter().sum::<i32>() as f64;
+                sum / (sorted.len() - 4) as f64
             } else {
                 let sum: f64 = batches.iter().sum::<i32>() as f64;
                 sum / batches.len() as f64

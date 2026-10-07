@@ -33,7 +33,7 @@
 
           # Frontend (Tauri는 Node.js 필수)
           nodejs_24      # 최신 LTS 버전 권장
-          nodePackages.pnpm
+          pnpm
           typescript
           typescript-language-server
 

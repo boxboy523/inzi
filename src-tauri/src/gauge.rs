@@ -378,8 +378,10 @@ mod tests {
             socket.write_all(&mock_response).await.unwrap();
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         });
-        let (tx, _) = tokio::sync::broadcast::channel(100);
-        let handle_result = spawn_gauge_stream("127.0.0.1", port, "4G700", tx);
+        let db_path = std::env::temp_dir().join(format!("inzi-gauge-test-{}.db", port));
+        let logger = HistoryLogger::new(db_path.to_str().unwrap());
+        // The listener above provides the mock server; avoid spawning another one.
+        let handle_result = spawn_gauge_stream("localhost", port, "4G700", logger);
         assert!(handle_result.is_ok(), "TCP 연결 또는 스트림 생성 실패");
     }
 

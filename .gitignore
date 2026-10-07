@@ -25,3 +25,6 @@ dist-ssr
 .envrc
 .direnv/*
 target/*
+
+DATAFILE_700/
+DATAFILE_710/

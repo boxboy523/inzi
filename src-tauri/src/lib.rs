@@ -2,7 +2,7 @@ use std::sync::{Arc, OnceLock};
 use std::{collections::HashMap, sync::Mutex};
 
 use chrono::{DateTime, Utc};
-use focas_rs::FocasClient;
+use crate::focas::FocasClient;
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -11,6 +11,7 @@ use crate::logger::HistoryLogger;
 use crate::{cnc::spawn_cnc_loop, config::AppConfig, gauge::spawn_gauge_stream};
 
 pub mod cnc;
+mod focas;
 pub mod config;
 pub mod gauge;
 pub mod logger;

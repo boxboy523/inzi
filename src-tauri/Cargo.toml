@@ -33,4 +33,5 @@ tokio-util = { version = "0.7.18", features = ["codec"] }
 bytes = "1.11.1"
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 rusqlite = { version = "0.38.0", features = ["bundled"] }
+[target.'cfg(target_os = "windows")'.dependencies]
 focas-rs = { git = "https://github.com/boxboy523/focas-rs.git" }

@@ -511,25 +511,25 @@ function renderRawGaugeTable() {
     // 2. 렌더링
     tbody.innerHTML = filteredLogs.map(log => {
         let rowClass = 'text-gray-400 hover:bg-gray-50'; // 기본: 사용됨(2)
-        let statusBadge = '<span class="bg-gray-200 text-gray-600 px-2 py-1 rounded-full text-xs">사용됨</span>';
+        let statusBadge = '<span class="gauge-badge bg-gray-200 text-gray-600 rounded-full">사용됨</span>';
 
         if (log.is_used === 0) {
             rowClass = 'bg-green-100 text-green-900 font-bold border-l-4 border-green-600';
-            statusBadge = '<span class="bg-green-200 text-green-800 px-2 py-1 rounded-full text-xs shadow-sm">대기중</span>';
+            statusBadge = '<span class="gauge-badge bg-green-200 text-green-800 rounded-full shadow-sm">대기중</span>';
         } else if (log.is_used === 1) {
             rowClass = 'bg-yellow-100 text-yellow-900 font-bold border-l-4 border-yellow-600';
-            statusBadge = '<span class="bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full text-xs shadow-sm">사용중</span>';
+            statusBadge = '<span class="gauge-badge bg-yellow-200 text-yellow-800 rounded-full shadow-sm">사용중</span>';
         }
 
         const typeLabel = log.tool_type === 1 ? '황삭' : '정삭';
         
         return `
             <tr class="border-b transition-colors ${rowClass}">
-                <td class="p-2 text-center">${new Date(log.timestamp).toLocaleString()}</td>
-                <td class="p-2 text-center">${log.active_line}호기</td>
-                <td class="p-2 text-center"><span class="bg-blue-100 text-blue-800 px-1 rounded text-xs font-bold">${typeLabel}</span></td>
-                <td class="p-2 text-right font-mono text-lg pr-4">${(log.measured_value / 10000).toFixed(4)}</td>
-                <td class="p-2 text-center">${statusBadge}</td>
+                <td class="text-center">${new Date(log.timestamp).toLocaleString()}</td>
+                <td class="text-center">${log.active_line}호기</td>
+                <td class="text-center"><span class="gauge-badge bg-blue-100 text-blue-800 rounded font-bold">${typeLabel}</span></td>
+                <td class="gauge-value text-right font-mono">${(log.measured_value / 10000).toFixed(4)}</td>
+                <td class="text-center">${statusBadge}</td>
             </tr>
         `;
     }).join('');

@@ -29,6 +29,19 @@
       z-index: 20;
     }
     #settings-button:hover { opacity: 0.9; }
+    #raw-gauge-modal { font-size: 12px; }
+    #raw-gauge-modal table { font-size: 12px; line-height: 18px; }
+    #raw-gauge-modal th,
+    #raw-gauge-modal td { padding: 3px 10px; white-space: nowrap; }
+    #raw-gauge-modal .gauge-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      font-size: 11px;
+      line-height: 16px;
+    }
+    #raw-gauge-modal .gauge-value { font-size: 13px; font-variant-numeric: tabular-nums; }
+    #raw-gauge-modal .filter-btn,
+    #btn-raw-gauge-close { font-size: 12px; line-height: 18px; }
   </style>
 </head>
 <body class="bg-gray-100 font-sans text-sm select-none h-screen w-screen flex flex-col">
@@ -112,16 +125,16 @@
   </div>
 
   <div id="raw-gauge-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 justify-center items-center z-50">
-    <div class="bg-white p-6 rounded-lg shadow-xl w-[600px] flex flex-col max-h-[80vh] text-[14px]">
-      <h2 id="raw-gauge-title" class="text-[20px] font-bold mb-4 text-[#00B0F0]">게이지 수신 내역</h2>
-      <div class="flex gap-2 mb-3">
+    <div class="bg-white p-3 rounded-lg shadow-xl w-[960px] max-w-[96vw] max-h-[80vh] flex flex-col">
+      <h2 id="raw-gauge-title" class="text-[18px] leading-[24px] font-bold mb-2 text-[#00B0F0]">게이지 수신 내역</h2>
+      <div class="flex flex-wrap gap-2 mb-2">
         <button class="filter-btn px-4 py-1 bg-gray-200 rounded hover:bg-gray-300 font-bold ring-2 ring-blue-500 transition" data-status="all">전체보기</button>
         <button class="filter-btn px-4 py-1 bg-green-200 text-green-800 rounded hover:bg-green-300 transition" data-status="0">대기중</button>
         <button class="filter-btn px-4 py-1 bg-yellow-200 text-yellow-800 rounded hover:bg-yellow-300 transition" data-status="1">사용중</button>
         <button class="filter-btn px-4 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition" data-status="2">사용됨</button>
       </div>
-      <div class="overflow-y-auto flex-1 border border-gray-300 rounded">
-        <table class="w-full text-[14px] text-left">
+      <div class="overflow-auto min-h-0 flex-1 border border-gray-300 rounded">
+        <table class="w-full text-left">
           <thead class="bg-gray-100 sticky top-0 shadow-sm">
             <tr>
               <th class="p-2 border-b text-center">수신 시간</th><th class="p-2 border-b text-center">라인</th><th class="p-2 border-b text-center">구분</th><th class="p-2 border-b text-center">측정값</th><th class="p-2 border-b text-center">상태</th>
@@ -130,7 +143,7 @@
           <tbody id="raw-gauge-body"></tbody>
         </table>
       </div>
-      <div class="flex justify-end mt-4">
+      <div class="flex justify-end mt-2">
         <button id="btn-raw-gauge-close" class="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 font-bold shadow">닫기</button>
       </div>
     </div>

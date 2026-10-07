@@ -1,33 +1,60 @@
 {
   "gauge": {
+    "model": "4G700",
     "ip": "127.0.0.1",
-    "port": 5002,
-    "read_req_hex": "500000FFFF03000C00100001040000701700A81900",
-    "write_req_hex_0": "500000FFFF03000E00200001140000D41700A801000100",
-    "write_req_hex_1": "500000FFFF03000E00200001140000D41700A801000000"
+    "port": 3500,
+    "read_req_hex": "500000FFFF03000C00100001040000701700A81600",
+    "write_req_hex_0": "500000FFFF03000E00200001140000D41700A801000000",
+    "write_req_hex": "500000FFFF03000E00200001140000D41700A801000100"
   },
   "machines": [
     {
       "id": 0,
       "name": "Lathe #1 (OP-10)",
-      "ip": "dummy",
+      "ip": "192.168.0.145",
       "port": 8193
     },
     {
       "id": 1,
       "name": "Lathe #1 (OP-10)",
-      "ip": "dummy",
+      "ip": "192.168.0.146",
       "port": 8193
     },
     {
       "id": 2,
       "name": "Lathe #2 (OP-20)",
-      "ip": "dummy",
+      "ip": "192.168.0.147",
       "port": 8193
     }
   ],
   "mapping": {
     "tool_data": {
+      "0": [
+        {
+          "machine_id": 0,
+          "tool_num": 11,
+          "basic_size": 48.0,
+          "manual_offset": 0.0,
+          "offset_rate": 1.0,
+          "active": false,
+          "avg_gauge": 48.0009,
+          "final_offset": -0.0009000000000014552,
+          "max_limit": 0.01,
+          "min_limit": -0.01
+        },
+        {
+          "machine_id": 0,
+          "tool_num": 12,
+          "basic_size": 48.0,
+          "manual_offset": 0.0,
+          "offset_rate": 1.0,
+          "active": false,
+          "avg_gauge": 48.0009,
+          "final_offset": -0.0009000000000014552,
+          "max_limit": 0.01,
+          "min_limit": -0.01
+        }
+      ],
       "2": [
         {
           "machine_id": 2,
@@ -36,8 +63,10 @@
           "manual_offset": 0.0,
           "offset_rate": 1.0,
           "active": false,
-          "avg_gauge": 48.0036,
-          "final_offset": -0.0035999999999987153
+          "avg_gauge": 47.9972,
+          "final_offset": 0.00280000000000058,
+          "max_limit": 0.01,
+          "min_limit": -0.01
         },
         {
           "machine_id": 2,
@@ -46,30 +75,10 @@
           "manual_offset": 0.0,
           "offset_rate": 1.0,
           "active": false,
-          "avg_gauge": 48.0036,
-          "final_offset": -0.0035999999999987153
-        }
-      ],
-      "0": [
-        {
-          "machine_id": 0,
-          "tool_num": 11,
-          "basic_size": 48.0,
-          "manual_offset": 7.0,
-          "offset_rate": 1.0,
-          "active": false,
-          "avg_gauge": null,
-          "final_offset": null
-        },
-        {
-          "machine_id": 0,
-          "tool_num": 22,
-          "basic_size": 48.0,
-          "manual_offset": 0.0,
-          "offset_rate": 1.0,
-          "active": false,
-          "avg_gauge": null,
-          "final_offset": null
+          "avg_gauge": 47.9972,
+          "final_offset": 0.00280000000000058,
+          "max_limit": 0.01,
+          "min_limit": -0.01
         }
       ],
       "1": [
@@ -80,8 +89,10 @@
           "manual_offset": 0.0,
           "offset_rate": 1.0,
           "active": false,
-          "avg_gauge": 48.0032,
-          "final_offset": -0.0031999999999996476
+          "avg_gauge": 47.9969,
+          "final_offset": 0.0031000000000034333,
+          "max_limit": 0.01,
+          "min_limit": -0.01
         },
         {
           "machine_id": 1,
@@ -90,15 +101,17 @@
           "manual_offset": 0.0,
           "offset_rate": 1.0,
           "active": false,
-          "avg_gauge": 48.0032,
-          "final_offset": -0.0031999999999996476
+          "avg_gauge": 47.9969,
+          "final_offset": 0.0031000000000034333,
+          "max_limit": 0.01,
+          "min_limit": -0.01
         }
       ]
     },
     "batch_size": {
-      "2": 5,
-      "0": 2,
-      "1": 5
+      "1": 5,
+      "0": 5,
+      "2": 5
     }
   },
   "admin": {
@@ -106,6 +119,6 @@
   },
   "log_path": "logs/log.db",
   "ui": {
-    "font_size": 16
+    "font_size": 26
   }
 }
