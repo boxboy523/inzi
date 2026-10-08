@@ -32,7 +32,7 @@ impl HistoryLogger {
         let conn = Connection::open(&path).expect("Failed to open database");
 
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;  
+            "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;",
         )
         .expect("Failed to set WAL mode");
@@ -74,7 +74,7 @@ impl HistoryLogger {
         tokio::task::spawn_blocking(move || {
             if let Ok(conn) = Connection::open(path) {
                 let _ = conn.execute(
-                   "INSERT INTO offset_history (timestamp, machine_id, tool_num, old_value, change_amount, new_value, success) 
+                   "INSERT INTO offset_history (timestamp, machine_id, tool_num, old_value, change_amount, new_value, success)
                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         log.timestamp.to_rfc3339(),
@@ -99,10 +99,10 @@ impl HistoryLogger {
         let conn = Connection::open(&self.db_path)?;
         tokio::task::spawn_blocking(move || {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, machine_id, tool_num, old_value, change_amount, new_value, success 
-                 FROM offset_history 
-                 WHERE machine_id = ?1 AND tool_num = ?2 
-                 ORDER BY timestamp DESC 
+                "SELECT timestamp, machine_id, tool_num, old_value, change_amount, new_value, success
+                 FROM offset_history
+                 WHERE machine_id = ?1 AND tool_num = ?2
+                 ORDER BY timestamp DESC
                  LIMIT ?3"
             )?;
 
@@ -135,10 +135,10 @@ impl HistoryLogger {
         let conn = Connection::open(&self.db_path).ok()?;
         let mut stmt = conn
             .prepare(
-                "SELECT timestamp, machine_id, tool_num, old_value, change_amount, new_value, success 
-                 FROM offset_history 
-                 WHERE machine_id = ?1 AND tool_num = ?2 
-                 ORDER BY timestamp DESC 
+                "SELECT timestamp, machine_id, tool_num, old_value, change_amount, new_value, success
+                 FROM offset_history
+                 WHERE machine_id = ?1 AND tool_num = ?2
+                 ORDER BY timestamp DESC
                  LIMIT 1",
             )
             .ok()?;
@@ -165,34 +165,42 @@ impl HistoryLogger {
     }
 
     pub fn insert_gauge_response(&self, res: GaugeResponse) {
+        if res.active_line == 0 || res.value1 == 0 || res.value2 == 0 {
+            #[cfg(debug_assertions)]
+            println!(
+                "[Gauge DB] DROP line={} value1={} value2={}",
+                res.active_line, res.value1, res.value2
+            );
+            return;
+        }
+
         let path = self.db_path.clone();
-
         tokio::task::spawn_blocking(move || {
-            if let Ok(mut conn) = Connection::open(path) {
-                let tx = conn.transaction();
-                if let Ok(tx) = tx {
-                    // active_line은 1부터 시작하므로, machine_id는 -1 해줌
-                    let machine_id = if res.active_line > 0 {
-                        res.active_line - 1
-                    } else {
-                        0
-                    };
-
-                    // 1. 황삭 데이터 (Value 1) -> tool_type: 1
-                    let _ = tx.execute(
-                        "INSERT INTO gauge_raw_logs (timestamp, active_line, machine_id, tool_type, measured_value, is_used) 
-                         VALUES (datetime('now', 'localtime'), ?1, ?2, 1, ?3, 0)",
-                        params![res.active_line, machine_id, res.value1],
+            let result = (|| -> rusqlite::Result<()> {
+                let mut conn = Connection::open(path)?;
+                let tx = conn.transaction()?;
+                // Measurement lines start at 1; internal machine IDs start at 0.
+                let machine_id = res.active_line - 1;
+                for (tool_type, value) in [(1, res.value1), (2, res.value2)] {
+                    tx.execute(
+                        "INSERT INTO gauge_raw_logs (active_line, machine_id, tool_type, measured_value, is_used)
+                         VALUES (?1, ?2, ?3, ?4, 0)",
+                        params![res.active_line, machine_id, tool_type, value],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "[Gauge DB] INSERT line={} value1={} value2={}",
+                        res.active_line, res.value1, res.value2
                     );
-
-                    // 2. 정삭 데이터 (Value 2) -> tool_type: 2
-                    let _ = tx.execute(
-                        "INSERT INTO gauge_raw_logs (timestamp, active_line, machine_id, tool_type, measured_value, is_used) 
-                         VALUES (datetime('now', 'localtime'), ?1, ?2, 2, ?3, 0)",
-                        params![res.active_line, machine_id, res.value2],
-                    );
-
-                    let _ = tx.commit(); // 둘 다 성공해야 저장
+                }
+                Err(e) => {
+                    eprintln!("[Gauge DB] INSERT ERROR: line={}: {}", res.active_line, e);
                 }
             }
         });
@@ -206,8 +214,8 @@ impl HistoryLogger {
             // 미사용 데이터 조회 (오래된 순)
             let mut stmt = tx
                 .prepare(
-                    "SELECT id, measured_value FROM gauge_raw_logs 
-                 WHERE machine_id = ?1 AND is_used = 0 
+                    "SELECT id, measured_value FROM gauge_raw_logs
+                 WHERE machine_id = ?1 AND active_line > 0 AND is_used = 0
                  ORDER BY id ASC",
                 )
                 .ok()?;
@@ -265,9 +273,9 @@ impl HistoryLogger {
         tokio::task::spawn_blocking(move || {
             let conn = Connection::open(db_path)?;
             let mut stmt = conn.prepare(
-                "SELECT id, timestamp, active_line, tool_type, measured_value, is_used 
-                 FROM gauge_raw_logs 
-                 WHERE machine_id = ?1 
+                "SELECT id, timestamp, active_line, tool_type, measured_value, is_used
+                 FROM gauge_raw_logs
+                 WHERE machine_id = ?1
                  ORDER BY id DESC LIMIT ?2",
             )?;
 
@@ -289,5 +297,112 @@ impl HistoryLogger {
             Ok(result)
         })
         .await?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct TestDb {
+        logger: HistoryLogger,
+        directory: std::path::PathBuf,
+    }
+
+    impl TestDb {
+        fn new() -> Self {
+            static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+            let directory = std::env::temp_dir().join(format!(
+                "inzi-logger-test-{}-{}",
+                std::process::id(),
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&directory).unwrap();
+            let logger = HistoryLogger::new(directory.join("logs.db").to_str().unwrap());
+            Self { logger, directory }
+        }
+
+        fn insert(&self, active_line: u16, value1: i32, value2: i32) {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                self.logger.insert_gauge_response(GaugeResponse {
+                    active_line,
+                    value1,
+                    value2,
+                    raw_data: String::new(),
+                    plc_data_on: true,
+                    measurement_state: 2,
+                });
+            });
+            // Runtime shutdown waits for queued blocking writes to finish.
+            drop(runtime);
+        }
+
+        fn row_count(&self) -> i64 {
+            Connection::open(&self.logger.db_path)
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM gauge_raw_logs", [], |row| row.get(0))
+                .unwrap()
+        }
+    }
+
+    impl Drop for TestDb {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn master_measurement_is_not_saved_as_machine_one() {
+        let db = TestDb::new();
+        // Nonzero values isolate the line-zero regression from value filtering.
+        db.insert(0, 480000, 480010);
+        assert_eq!(db.row_count(), 0);
+        assert_eq!(db.logger.fetch_and_process_batch(0, 2), None);
+    }
+
+    #[test]
+    fn zero_in_either_value_drops_the_whole_measurement() {
+        let db = TestDb::new();
+        for (value1, value2) in [(0, 480000), (480000, 0), (0, 0)] {
+            db.insert(1, value1, value2);
+            assert_eq!(db.row_count(), 0);
+        }
+    }
+
+    #[test]
+    fn valid_measurements_keep_both_values_and_machine_mapping() {
+        let db = TestDb::new();
+        for line in 1..=3 {
+            db.insert(line, 480000, 480010);
+            assert_eq!(
+                db.logger.fetch_and_process_batch(line - 1, 2),
+                Some(vec![480000, 480010])
+            );
+            assert_eq!(db.logger.fetch_and_process_batch(line - 1, 2), None);
+        }
+        assert_eq!(db.row_count(), 6);
+    }
+
+    #[test]
+    fn historical_master_rows_do_not_fill_a_machine_batch() {
+        let db = TestDb::new();
+        let conn = Connection::open(&db.logger.db_path).unwrap();
+        for tool_type in [1, 2] {
+            conn.execute(
+                "INSERT INTO gauge_raw_logs (active_line, machine_id, tool_type, measured_value)
+                 VALUES (0, 0, ?1, 0)",
+                params![tool_type],
+            )
+            .unwrap();
+        }
+        assert_eq!(db.logger.fetch_and_process_batch(0, 2), None);
+        db.insert(1, 480000, 480010);
+        assert_eq!(db.logger.fetch_and_process_batch(0, 4), None);
+        assert_eq!(
+            db.logger.fetch_and_process_batch(0, 2),
+            Some(vec![480000, 480010])
+        );
     }
 }

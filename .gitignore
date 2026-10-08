@@ -27,5 +27,6 @@ dist-ssr
 .direnv/*
 target/*
 
-DATAFILE_700/
-DATAFILE_710/
+DATAFILE_700/*
+DATAFILE_710/*
+src-tauri/config.json
